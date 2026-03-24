@@ -6,12 +6,15 @@
 from typer.testing import CliRunner
 from pathlib import Path
 from semantic_veritas_tool.semantic_veritas import cli
+import pytest
 
 
-runner = CliRunner()
+@pytest.fixture
+def runner() -> CliRunner:
+    return CliRunner()
 
 
-def test_svt_init():
+def test_svt_init(runner: CliRunner):
     """
     Verifies that `svt init` does the following:
         - looks for common versioning files for common programming languages (python, javascript, rust, go, etc.)
@@ -29,7 +32,7 @@ def test_svt_init():
     assert Path("version.txt").read_text() == "project_name\n0.1.0"
 
 
-def test_svt_version():
+def test_svt_version(runner: CliRunner):
     """
     Verifies that `svt version` does the following:
         - looks for the version.txt file
@@ -70,7 +73,7 @@ def test_svt_version():
     assert "project_name/project_name:v0.1.0" in result.output
 
 
-def test_svt_bump_default():
+def test_svt_bump_default(runner: CliRunner):
     """
     Verifies that `svt bump` does the following:
         - looks for the version.txt file
@@ -100,7 +103,7 @@ def test_svt_bump_default():
     assert new_default_version["build"] == old_version["build"]
 
 
-def test_svt_bump_major():
+def test_svt_bump_major(runner: CliRunner):
     """
     Verifies that `svt bump [-x|--major]` does the following:
         - looks for the version.txt file
@@ -127,7 +130,7 @@ def test_svt_bump_major():
     assert new_major_version["patch"] == 0
 
 
-def test_svt_bump_minor():
+def test_svt_bump_minor(runner: CliRunner):
     """
     Verifies that `svt bump [-y|--minor]` does the following:
         - looks for the version.txt file
@@ -154,7 +157,7 @@ def test_svt_bump_minor():
     assert new_minor_version["patch"] == 0
 
 
-def test_svt_bump_patch():
+def test_svt_bump_patch(runner: CliRunner):
     """
     Verifies that `svt bump [-z|--patch]` does the following:
         - looks for the version.txt file
@@ -181,7 +184,7 @@ def test_svt_bump_patch():
     assert new_patch_version["patch"] == old_version["patch"] + 1
 
 
-def test_svt_bump_build():
+def test_svt_bump_build(runner: CliRunner):
     """
     Verifies that `svt bump [-b|--build]` does the following:
         - looks for the version.txt file
@@ -209,7 +212,7 @@ def test_svt_bump_build():
     assert new_build_version["build"] == old_version["build"] + 1
 
 
-def test_svt_bump_build_major():
+def test_svt_bump_build_major(runner: CliRunner):
     """
     Verifies that `svt bump [-x|--major] [-b|--build]` does the following:
         - looks for the version.txt file
@@ -265,7 +268,7 @@ def test_svt_bump_build_minor():
     assert new_build_minor_version["build"] == 0
 
 
-def test_svt_bump_build_patch():
+def test_svt_bump_build_patch(runner: CliRunner):
     """
     Verifies that `svt bump [-z|--patch] [-b|--build]` does the following:
         - looks for the version.txt file
@@ -293,7 +296,7 @@ def test_svt_bump_build_patch():
     assert new_build_patch_version["build"] == old_version["build"]
 
 
-def test_svt_set_explicit_version():
+def test_svt_set_explicit_version(runner: CliRunner):
     """
     Verifies that `svt set <version>` does the following:
         - looks for the version.txt file
