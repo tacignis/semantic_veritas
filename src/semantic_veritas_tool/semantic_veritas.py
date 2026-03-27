@@ -7,6 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import typer
+import yaml
+from pydantic import ValidationError
 
 from semantic_veritas_tool.data_models import Project, Version
 from semantic_veritas_tool.functions import (
@@ -31,6 +33,26 @@ cli = typer.Typer()
 def _missing_version_file_message() -> str:
     message = "version.yml was not found. Please run `svt init`."
     return message
+
+
+def _load_project() -> Project:
+    project: Project
+    try:
+        project = read_project_version()
+    except yaml.YAMLError:
+        typer.echo(
+            "version.yml could not be parsed as YAML. "
+            "Fix the syntax or remove the file and run `svt init`."
+        )
+        raise typer.Exit(code=1)
+    except ValidationError:
+        typer.echo(
+            "version.yml is invalid or incomplete. "
+            "It must include name and version.current (semver X.Y.Z or X.Y.Z.b); "
+            "optional keys: version.previous, manifest."
+        )
+        raise typer.Exit(code=1)
+    return project
 
 
 def _prompt_for_manifest(candidates: list[Path]) -> Path:
@@ -134,7 +156,7 @@ def version(
         typer.echo(_missing_version_file_message())
         raise typer.Exit(code=1)
 
-    project = read_project_version()
+    project = _load_project()
     requested_version = _get_requested_version(project, previous=previous)
 
     if tag is not None:
@@ -178,7 +200,7 @@ def bump(
         typer.echo(_missing_version_file_message())
         raise typer.Exit(code=1)
 
-    project = read_project_version()
+    project = _load_project()
     old_version = project.version.current
 
     try:
@@ -233,7 +255,7 @@ def set_version(
         typer.echo("Version is not in the correct format (X.Y.Z[.b]).")
         raise typer.Exit(code=1)
 
-    project = read_project_version()
+    project = _load_project()
     old_version = project.version.current
 
     updated_project = Project(

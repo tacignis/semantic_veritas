@@ -8,8 +8,10 @@ from pathlib import Path
 
 from pydantic import BaseModel, field_validator
 
-
-SEMVER_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$")
+# Single source for semver text: X.Y.Z with optional fourth numeric segment (build).
+SEMVER_BODY = r"[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?"
+SEMVER_PATTERN = re.compile(rf"^{SEMVER_BODY}$")
+SEMVER_TAG_PATTERN = re.compile(rf"^v?({SEMVER_BODY})$")
 
 
 class Version(BaseModel):

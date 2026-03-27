@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import json
-import re
 from datetime import datetime
 from pathlib import Path
 import tomllib
@@ -13,14 +12,12 @@ import tomllib
 from git import GitCommandError, PushInfo, Repo
 import yaml
 
-from semantic_veritas_tool.data_models import Project, Version
+from semantic_veritas_tool.data_models import Project, SEMVER_PATTERN, SEMVER_TAG_PATTERN
 
 
 DEFAULT_VERSION = "0.1.0"
 VERSION_FILE_NAME = "version.yml"
 PREVIOUS_VERSION_LABEL = " (previous version)"
-SEMVER_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(\.[0-9]+)?$")
-SEMVER_TAG_PATTERN = re.compile(r"^v?([0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?)$")
 
 
 def version_file_path(base_dir: Path | None = None) -> Path:

@@ -8,6 +8,8 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from semantic_veritas_tool.data_models import SEMVER_PATTERN
+from semantic_veritas_tool.functions import validate_version
 from semantic_veritas_tool.semantic_veritas import cli
 
 
@@ -200,6 +202,61 @@ def test_svt_version_missing_file_fails(runner: CliRunner, project_dir: Path):
 
     assert result.exit_code != 0
     assert "run `svt init`" in result.output.lower()
+
+
+def test_validate_version_uses_shared_semver_rule():
+    assert validate_version("1.2.3")
+    assert validate_version("1.2.3.4")
+    assert validate_version("  2.0.0.1  ")
+    assert not validate_version("1.2")
+    assert not validate_version("v1.2.3")
+    assert SEMVER_PATTERN.fullmatch("1.2.3.4")
+
+
+@pytest.mark.parametrize(
+    "cli_args",
+    [
+        ["version"],
+        ["bump"],
+        ["set", "1.0.0"],
+    ],
+)
+def test_svt_rejects_malformed_yaml_version_file(
+    runner: CliRunner,
+    project_dir: Path,
+    cli_args: list[str],
+):
+    (project_dir / "version.yml").write_text("name: [\n  bad: yaml\n")
+
+    result = runner.invoke(cli, cli_args, catch_exceptions=False)
+
+    assert result.exit_code == 1
+    assert "could not be parsed as YAML" in result.output
+    assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize(
+    "cli_args",
+    [
+        ["version"],
+        ["bump"],
+        ["set", "1.0.0"],
+    ],
+)
+def test_svt_rejects_invalid_schema_version_file(
+    runner: CliRunner,
+    project_dir: Path,
+    cli_args: list[str],
+):
+    (project_dir / "version.yml").write_text(
+        yaml.safe_dump({"name": "x", "version": {"current": "not-a-version"}})
+    )
+
+    result = runner.invoke(cli, cli_args, catch_exceptions=False)
+
+    assert result.exit_code == 1
+    assert "invalid or incomplete" in result.output.lower()
+    assert "Traceback" not in result.output
 
 
 def test_svt_version_formats(runner: CliRunner, project_dir: Path):
