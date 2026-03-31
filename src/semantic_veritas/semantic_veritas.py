@@ -12,6 +12,7 @@ import typer
 import yaml
 from pydantic import ValidationError
 
+from semantic_veritas import get_tool_version
 from semantic_veritas.data_models import Project, Version
 from semantic_veritas.functions import (
     DEFAULT_VERSION,
@@ -33,7 +34,34 @@ from semantic_veritas.functions import (
 )
 
 
-cli = typer.Typer()
+def _version_option_callback(value: bool) -> None:
+    if value:
+        typer.echo(get_tool_version())
+        raise typer.Exit(code=0)
+
+
+def _cli_callback(
+    ctx: typer.Context,
+    _version: bool = typer.Option(
+        False,
+        "--version",
+        "-V",
+        help="Print the semantic-veritas tool version and exit.",
+        callback=_version_option_callback,
+        is_eager=True,
+    ),
+) -> None:
+    pass
+
+
+cli = typer.Typer(
+    name="svt",
+    help=(
+        "Semantic versioning helper for projects. "
+        f"Tool package (semantic-veritas): {get_tool_version()}."
+    ),
+    callback=_cli_callback,
+)
 
 
 def _missing_version_file_message() -> str:
@@ -264,6 +292,14 @@ def init(
 
 
 @cli.command()
+def about() -> None:
+    """
+    Print the semantic-veritas tool version (from package metadata).
+    """
+    typer.echo(get_tool_version())
+
+
+@cli.command()
 def reconcile(
     manifest: str | None = typer.Option(
         None,
@@ -318,7 +354,10 @@ def version(
     tag: str | None = typer.Option(None, "--tag", "-t"),
 ):
     """
-    Print the current version.
+    Print the project version from version.yml.
+
+    This reads the managed project state, not the semantic-veritas tool package.
+    For the tool itself, use ``svt --version`` (or ``-V``).
     """
     if not version_file_path().exists():
         typer.echo(_missing_version_file_message())

@@ -9,6 +9,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from semantic_veritas import get_tool_version
 from semantic_veritas.data_models import Project, SEMVER_PATTERN, Version
 from semantic_veritas.functions import (
     detect_python_package_manager,
@@ -379,6 +380,31 @@ def test_svt_rejects_invalid_schema_version_file(
     assert result.exit_code == 1
     assert "invalid or incomplete" in result.output.lower()
     assert "Traceback" not in result.output
+
+
+@pytest.mark.parametrize("tool_version_args", [["--version"], ["-V"]])
+def test_svt_tool_version_flags_exit_zero(runner: CliRunner, tool_version_args: list[str]):
+    expected = get_tool_version()
+    result = runner.invoke(cli, tool_version_args, catch_exceptions=False)
+    assert result.exit_code == 0
+    assert result.output.strip() == expected
+
+
+def test_svt_about_prints_tool_version_and_exits_zero(runner: CliRunner):
+    expected = get_tool_version()
+    result = runner.invoke(cli, ["about"], catch_exceptions=False)
+    assert result.exit_code == 0
+    assert result.output.strip() == expected
+
+
+def test_svt_help_includes_tool_version_context(runner: CliRunner):
+    tool_ver = get_tool_version()
+    result = runner.invoke(cli, ["--help"], catch_exceptions=False)
+    assert result.exit_code == 0
+    out = result.output
+    assert "Tool package" in out
+    assert "semantic-veritas" in out
+    assert tool_ver in out
 
 
 def test_svt_version_formats(runner: CliRunner, project_dir: Path):

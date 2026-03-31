@@ -4,6 +4,8 @@ CLI **`svt`** for reading, bumping, reconciling, and setting semver in a root **
 
 **Requires:** Python 3.14+ (see `pyproject.toml`). Install deps with `uv sync`. Run `uv run svt …`, or install the package so the `svt` entry point is on your `PATH`.
 
+**Tool vs project:** `svt --version` / `svt -V` and `svt about` print the installed **semantic-veritas** (CLI) package version. The **`svt version`** subcommand prints **project** semver from **`version.yml`** in the cwd (name + current or previous per flags below).
+
 ## `version.yml` schema
 
 ```yaml
@@ -44,7 +46,7 @@ Name and version are taken from the manifest when possible; `go.mod` uses the mo
 
 ### `svt version`
 
-Prints a version string. With `--previous` / `-p`, uses `version.previous` (fails if unset).
+Prints the **project** semver from `version.yml` (not the CLI package version). With `--previous` / `-p`, uses `version.previous` (fails if unset).
 
 | Flags | Output (non-error) |
 |-------|---------------------|
