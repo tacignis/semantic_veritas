@@ -1,19 +1,28 @@
 [project]
 name = "semantic-veritas"
 version = "0.3.1"
-description = "Add your description here"
+description = "CLI tool for managing semantic versioning across polyglot repositories"
 readme = "README.md"
+license = { text = "MIT" }
 authors = [
-    { name = "Jonathan Belden", email = "belden@oakleasimpsonsecurity.com" }
+    { name = "Jonathan Belden", email = "tacignis@gmail.com" }
 ]
-requires-python = ">=3.14"
+requires-python = ">=3.11"
 dependencies = [
     "gitpython>=3.1.46",
     "pyyaml>=6.0.3",
     "pydantic>=2.12.5",
-    "pytest>=9.0.2",
     "typer>=0.24.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourname/semantic-veritas"
+Repository = "https://github.com/yourname/semantic-veritas"
 
 [project.scripts]
 svt = "semantic_veritas.semantic_veritas:cli"
