@@ -1,0 +1,5 @@
+name: semantic-veritas-tool
+version:
+  current: 0.1.1
+  previous: null
+manifest: pyproject.toml

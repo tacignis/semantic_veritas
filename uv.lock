@@ -5,7 +5,7 @@ requires-python = ">=3.14"
 [manifest]
 members = [
     "python-project",
-    "semantic-veritas-tool",
+    "semantic-veritas",
 ]
 
 [[package]]
@@ -244,7 +244,7 @@ wheels = [
 
 [[package]]
 name = "semantic-veritas-tool"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "gitpython" },

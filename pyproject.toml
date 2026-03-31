@@ -1,6 +1,6 @@
 [project]
-name = "semantic-veritas-tool"
-version = "0.1.0"
+name = "semantic-veritas"
+version = "0.1.1"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.scripts]
-svt = "semantic_veritas_tool.semantic_veritas:cli"
+svt = "semantic_veritas.semantic_veritas:cli"
 
 [build-system]
 requires = ["uv_build>=0.9.15,<0.10.0"]
