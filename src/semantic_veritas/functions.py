@@ -9,6 +9,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 import tomllib
+from typing import Literal
 
 from git import GitCommandError, PushInfo, Repo
 import yaml
@@ -25,6 +26,19 @@ _AMBIGUOUS_LOCK_MSG = (
 )
 _NO_LOCK_MSG = (
     "No poetry.lock or uv.lock found; add one or use --skip-sync to skip package-manager sync."
+)
+_POLYGLOT_NO_LOCK_MSG = (
+    "Multiple manifests (pyproject.toml, package.json, Cargo.toml, or go.mod) were found with no "
+    "lockfile and no manifest key in version.yml. Set manifest in version.yml to the authoritative "
+    "file, or add poetry.lock or uv.lock for Python."
+)
+_PYPROJECT_NO_LOCK_MSG = (
+    "pyproject.toml is authoritative for this bump but neither poetry.lock nor uv.lock was found. "
+    "Add a lockfile or use --skip-sync to skip package-manager sync."
+)
+_LOCK_WITHOUT_PYPROJECT_MSG = (
+    "A poetry.lock or uv.lock file is present but pyproject.toml was not found; fix the project "
+    "layout or use --skip-sync."
 )
 
 
@@ -120,6 +134,63 @@ def run_python_package_manager_version_set(
 def sync_python_package_version(version: str, base_dir: Path | None = None) -> None:
     tool = detect_python_package_manager(base_dir)
     run_python_package_manager_version_set(tool, version, base_dir)
+
+
+def _resolve_authoritative_manifest_path_for_bump(project: Project, cwd: Path) -> Path | None:
+    manifests = discover_known_manifests(cwd)
+    has_py = (cwd / "pyproject.toml").is_file()
+    has_poetry = (cwd / "poetry.lock").is_file()
+    has_uv = (cwd / "uv.lock").is_file()
+    has_lock = has_poetry or has_uv
+
+    resolved: Path | None = None
+
+    if project.manifest is not None:
+        stored = project.manifest
+        candidate = stored if stored.is_absolute() else cwd / stored
+        if not candidate.exists():
+            raise ValueError(
+                f"Stored manifest in version.yml does not exist: {candidate}. "
+                "Restore the file, update the manifest key in version.yml, or use --skip-sync."
+            )
+        resolved = candidate.resolve()
+    elif len(manifests) == 0:
+        resolved = None
+    elif len(manifests) == 1:
+        resolved = manifests[0].resolve()
+    elif has_lock and has_py:
+        resolved = (cwd / "pyproject.toml").resolve()
+    elif has_lock and not has_py:
+        raise ValueError(_LOCK_WITHOUT_PYPROJECT_MSG)
+    else:
+        raise ValueError(_POLYGLOT_NO_LOCK_MSG)
+
+    return resolved
+
+
+def python_sync_action_for_bump(
+    project: Project,
+    base_dir: Path | None = None,
+) -> Literal["skip", "run"]:
+    cwd = (base_dir or Path.cwd()).resolve()
+    has_poetry = (cwd / "poetry.lock").is_file()
+    has_uv = (cwd / "uv.lock").is_file()
+
+    authoritative = _resolve_authoritative_manifest_path_for_bump(project, cwd)
+    action: Literal["skip", "run"] = "skip"
+
+    if authoritative is None:
+        action = "skip"
+    elif authoritative.name != "pyproject.toml":
+        action = "skip"
+    elif has_poetry and has_uv:
+        raise ValueError(_AMBIGUOUS_LOCK_MSG)
+    elif has_poetry or has_uv:
+        action = "run"
+    else:
+        raise ValueError(_PYPROJECT_NO_LOCK_MSG)
+
+    return action
 
 
 def save_project_version(project: Project, base_dir: Path | None = None) -> None:

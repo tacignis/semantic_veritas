@@ -24,6 +24,7 @@ from semantic_veritas.functions import (
     is_supported_manifest,
     parse_manifest,
     push_git_tag,
+    python_sync_action_for_bump,
     read_project_version,
     save_project_version,
     sync_python_package_version,
@@ -372,7 +373,7 @@ def bump(
     skip_sync: bool = typer.Option(
         False,
         "--skip-sync",
-        help="Skip syncing pyproject.toml via uv or poetry.",
+        help="Skip Python package-manager sync (uv/poetry) when it would otherwise run.",
     ),
 ):
     """
@@ -406,25 +407,37 @@ def bump(
 
     if not skip_sync:
         try:
-            sync_python_package_version(new_version)
+            sync_action = python_sync_action_for_bump(project)
         except ValueError as exc:
             save_project_version(project)
             typer.echo(
                 f"Package manager configuration error ({exc}). "
                 "version.yml was reverted. "
-                "Use --skip-sync to skip this step.",
+                "Use --skip-sync to skip Python sync when appropriate.",
                 err=True,
             )
             raise typer.Exit(code=1)
-        except RuntimeError as exc:
-            save_project_version(project)
-            typer.echo(
-                f"Package manager sync failed ({exc}). "
-                "version.yml was reverted. "
-                "Use --skip-sync to skip this step.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
+        if sync_action == "run":
+            try:
+                sync_python_package_version(new_version)
+            except ValueError as exc:
+                save_project_version(project)
+                typer.echo(
+                    f"Package manager configuration error ({exc}). "
+                    "version.yml was reverted. "
+                    "Use --skip-sync to skip this step.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+            except RuntimeError as exc:
+                save_project_version(project)
+                typer.echo(
+                    f"Package manager sync failed ({exc}). "
+                    "version.yml was reverted. "
+                    "Use --skip-sync to skip this step.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
 
     if tag is not None:
         tag_message = build_tag_message(project.name, new_version, tag)

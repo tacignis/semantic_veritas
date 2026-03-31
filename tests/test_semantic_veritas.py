@@ -425,6 +425,16 @@ def test_svt_bump_missing_file_fails(runner: CliRunner, project_dir: Path):
     assert "run `svt init`" in result.output.lower()
 
 
+def _write_minimal_pyproject_with_lock(project_dir: Path) -> None:
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "project_name"
+version = "1.2.3"
+"""
+    )
+    (project_dir / "uv.lock").write_text("")
+
+
 @patch("semantic_veritas.semantic_veritas.sync_python_package_version")
 def test_svt_bump_default_calls_sync_helper(
     mock_sync: MagicMock,
@@ -432,6 +442,7 @@ def test_svt_bump_default_calls_sync_helper(
     project_dir: Path,
 ):
     _write_version_file(project_dir, name="project_name", current="1.2.3")
+    _write_minimal_pyproject_with_lock(project_dir)
 
     result = runner.invoke(cli, ["bump"], catch_exceptions=False)
 
@@ -448,6 +459,7 @@ def test_svt_bump_sync_failure_reverts_version_yml_and_exits(
 ):
     mock_sync.side_effect = RuntimeError("sync failed")
     _write_version_file(project_dir, name="project_name", current="1.2.3")
+    _write_minimal_pyproject_with_lock(project_dir)
 
     result = runner.invoke(cli, ["bump"], catch_exceptions=False)
 
@@ -458,6 +470,247 @@ def test_svt_bump_sync_failure_reverts_version_yml_and_exits(
     combined = (result.stderr or "") + (result.stdout or "")
     assert "--skip-sync" in combined
     assert "reverted" in combined.lower()
+
+
+@patch("semantic_veritas.semantic_veritas.sync_python_package_version")
+def test_svt_bump_cargo_only_skips_python_sync(
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "Cargo.toml").write_text(
+        """[package]
+name = "rust-project"
+version = "1.2.3"
+"""
+    )
+    _write_version_file(project_dir, name="rust-project", current="1.2.3")
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    mock_sync.assert_not_called()
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.4"
+
+
+@patch("semantic_veritas.semantic_veritas.sync_python_package_version")
+def test_svt_bump_version_yml_cargo_manifest_skips_python_sync_when_pyproject_exists(
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "Cargo.toml").write_text(
+        """[package]
+name = "rust-project"
+version = "1.2.3"
+"""
+    )
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "pkg"
+version = "1.2.3"
+"""
+    )
+    _write_version_file(project_dir, name="rust-project", current="1.2.3", manifest="Cargo.toml")
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    mock_sync.assert_not_called()
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.4"
+
+
+def test_svt_bump_stored_manifest_missing_fails_with_guidance_and_reverts(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    _write_version_file(project_dir, name="pkg", current="1.2.3", manifest="Cargo.toml")
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.3"
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "stored manifest" in combined.lower()
+    assert "does not exist" in combined.lower()
+    assert "reverted" in combined.lower()
+
+
+def test_svt_bump_both_locks_with_pyproject_authoritative_fails_and_reverts(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "pkg"
+version = "1.2.3"
+"""
+    )
+    (project_dir / "uv.lock").write_text("")
+    (project_dir / "poetry.lock").write_text("")
+    _write_version_file(project_dir, name="pkg", current="1.2.3", manifest="pyproject.toml")
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.3"
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "Both poetry.lock and uv.lock" in combined
+    assert "reverted" in combined.lower()
+
+
+def test_svt_bump_lock_without_pyproject_polyglot_fails_with_guidance(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "Cargo.toml").write_text(
+        """[package]
+name = "rust-project"
+version = "1.2.3"
+"""
+    )
+    (project_dir / "package.json").write_text('{"name":"node","version":"1.0.0"}')
+    (project_dir / "uv.lock").write_text("")
+    _write_version_file(project_dir, name="rust-project", current="1.2.3", manifest=None)
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.3"
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "pyproject.toml" in combined.lower()
+    assert "poetry.lock" in combined.lower() or "uv.lock" in combined.lower()
+    assert "reverted" in combined.lower()
+
+
+@patch("semantic_veritas.semantic_veritas.sync_python_package_version")
+def test_svt_bump_polyglot_pyproject_and_lock_runs_sync(
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "pkg"
+version = "1.2.3"
+"""
+    )
+    (project_dir / "Cargo.toml").write_text(
+        """[package]
+name = "rust-project"
+version = "3.2.1"
+"""
+    )
+    (project_dir / "uv.lock").write_text("")
+    _write_version_file(project_dir, name="pkg", current="1.2.3", manifest=None)
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    mock_sync.assert_called_once_with("1.2.4")
+
+
+@patch("semantic_veritas.semantic_veritas.sync_python_package_version")
+def test_svt_bump_go_mod_only_skips_python_sync(
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "go.mod").write_text("module example.com/foo\n\ngo 1.21\n")
+    _write_version_file(project_dir, name="foo", current="1.2.3")
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    mock_sync.assert_not_called()
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.4"
+
+
+@patch("semantic_veritas.semantic_veritas.sync_python_package_version")
+def test_svt_bump_package_json_only_skips_python_sync(
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "package.json").write_text('{"name":"node-project","version":"1.2.3"}')
+    _write_version_file(project_dir, name="node-project", current="1.2.3")
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    mock_sync.assert_not_called()
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.4"
+
+
+def test_svt_bump_pyproject_authoritative_no_lock_fails_with_guidance(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "pkg"
+version = "1.2.3"
+"""
+    )
+    _write_version_file(project_dir, name="pkg", current="1.2.3")
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.3"
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "pyproject.toml is authoritative" in combined
+    assert "poetry.lock" in combined and "uv.lock" in combined
+    assert "--skip-sync" in combined
+
+
+def test_svt_bump_polyglot_no_lock_without_manifest_fails_with_actionable_message(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "python-project"
+version = "1.2.3"
+"""
+    )
+    (project_dir / "Cargo.toml").write_text(
+        """[package]
+name = "rust-project"
+version = "3.2.1"
+"""
+    )
+    _write_version_file(project_dir, name="python-project", current="1.2.3")
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.3"
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "Multiple manifests" in combined
+    assert "manifest key" in combined.lower() or "version.yml" in combined
+    assert "poetry.lock" in combined or "uv.lock" in combined
+
+
+@patch("semantic_veritas.semantic_veritas.sync_python_package_version")
+def test_svt_bump_poetry_lock_invokes_sync_path(
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "project_name"
+version = "1.2.3"
+"""
+    )
+    (project_dir / "poetry.lock").write_text("")
+    _write_version_file(project_dir, name="project_name", current="1.2.3")
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    mock_sync.assert_called_once_with("1.2.4")
 
 
 @patch("semantic_veritas.semantic_veritas.sync_python_package_version")

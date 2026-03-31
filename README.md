@@ -65,18 +65,27 @@ Bumps `version.current`; the old current value becomes `version.previous`.
 - **`--build` / `-b` alone**: increment the fourth segment (or start it at `1` if absent).
 - **`-b` with `-x`/`-y`/`-z`**: after the semantic bump, set the fourth segment to `0`. Without `-b`, a major/minor/patch bump **drops** an existing fourth segment.
 
-**Package-manager alignment (Python):** By default, after `version.yml` is written, `svt` picks **uv** or **poetry** from lockfiles in the project root and runs **`uv version <semver>`** or **`poetry version <semver>`** so `pyproject.toml` matches the bump. This is not `uv sync` / `poetry install`; it is the version-setting step only.
+**Package-manager alignment (Python):** After `version.yml` is written, `svt` may run **`uv version <semver>`** or **`poetry version <semver>`** so `pyproject.toml` matches the bump. This is not `uv sync` / `poetry install`; it is the version-setting step only. Alignment runs only when the **authoritative manifest** for the bump is **`pyproject.toml`** (see below). Otherwise Python sync is **skipped** automatically.
+
+**Authoritative manifest for bump:** Resolved from `version.yml`’s optional `manifest` path if set and present; else if exactly one of `pyproject.toml`, `package.json`, `Cargo.toml`, or `go.mod` exists in the cwd, that file; else if **two or more** manifests are present and **both** a Python lockfile (`uv.lock` or `poetry.lock`) and `pyproject.toml` exist, **`pyproject.toml`**; else resolution fails (see polyglot / lock edge cases).
+
+**Non-Python projects (auto-skip):** If the authoritative manifest is **`package.json`**, **`Cargo.toml`**, or **`go.mod`** (including a repo with only those files and no `pyproject.toml`), **`uv`/`poetry` is not invoked.** Same if there is **no** supported manifest in the cwd (bump updates `version.yml` only).
+
+**`pyproject.toml` authoritative, no lockfiles:** If `pyproject.toml` is authoritative and **neither** `uv.lock` **nor** `poetry.lock` is present, the bump **fails** with a short message: add a lockfile or use **`--skip-sync`**.
+
+**Polyglot (multiple manifests, no Python lockfiles):** With **two or more** manifests in the cwd and **no** `uv.lock`/`poetry.lock`, bump **fails** unless you disambiguate: set **`manifest`** in `version.yml` to the file that should drive the project (e.g. `Cargo.toml`), **or** add `poetry.lock` or `uv.lock` if Python alignment is intended. If a lockfile exists **without** `pyproject.toml`, bump fails with guidance to fix the layout or use **`--skip-sync`**.
+
+**Lockfiles present (unchanged):** When `pyproject.toml` is authoritative and a lockfile set applies:
 
 | Lockfiles in cwd | Behavior |
 |------------------|----------|
 | `uv.lock` only | `uv version …` |
 | `poetry.lock` only | `poetry version …` |
 | Both `uv.lock` and `poetry.lock` | Fails: ambiguous; remove one lockfile or use `--skip-sync`. |
-| Neither | Fails: add a lockfile or use `--skip-sync`. |
 
-**`svt bump --skip-sync`:** Skips package-manager alignment entirely (no `uv`/`poetry` invocation).
+**`svt bump --skip-sync`:** Skips Python package-manager alignment entirely (no `uv`/`poetry` invocation), regardless of manifests or lockfiles.
 
-**On alignment or config failure:** If lockfiles are ambiguous or missing, or if the `uv`/`poetry` version command fails (non-zero exit), `version.yml` is **reverted** to its pre-bump state and the command exits **non-zero**. Messages point at `--skip-sync` when skipping alignment is appropriate.
+**On alignment or config failure:** If resolution fails, lockfiles are ambiguous, `pyproject.toml` lacks a lockfile, or the `uv`/`poetry` version command fails (non-zero exit), `version.yml` is **reverted** to its pre-bump state and the command exits **non-zero**. Messages point at **`--skip-sync`** when skipping alignment is appropriate.
 
 **`--tag` / `-t <note>` (optional):** After a successful bump (and alignment unless `--skip-sync`), creates the semver tag and pushes it. **Tag already exists** or **tag creation failure:** `version.yml` is reverted to the pre-bump file, exit non-zero. **Tag push failure** (after the tag was created locally): `version.yml` is reverted and the **local tag is removed if present**, exit non-zero.
 
