@@ -123,9 +123,18 @@ def sync_python_package_version(version: str, base_dir: Path | None = None) -> N
 
 
 def save_project_version(project: Project, base_dir: Path | None = None) -> None:
+    root = (base_dir or Path.cwd()).resolve()
     serialized_manifest: str | None = None
     if project.manifest is not None:
-        serialized_manifest = str(project.manifest.relative_to(base_dir or Path.cwd()).as_posix())
+        manifest_path = project.manifest
+        if manifest_path.is_absolute():
+            manifest_abs = manifest_path.resolve()
+        else:
+            manifest_abs = (root / manifest_path).resolve()
+        try:
+            serialized_manifest = manifest_abs.relative_to(root).as_posix()
+        except ValueError:
+            serialized_manifest = manifest_abs.as_posix()
 
     payload = {
         "name": project.name,

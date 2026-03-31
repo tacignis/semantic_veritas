@@ -9,8 +9,12 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from semantic_veritas.data_models import SEMVER_PATTERN
-from semantic_veritas.functions import detect_python_package_manager, validate_version
+from semantic_veritas.data_models import Project, SEMVER_PATTERN, Version
+from semantic_veritas.functions import (
+    detect_python_package_manager,
+    save_project_version,
+    validate_version,
+)
 from semantic_veritas.semantic_veritas import cli
 
 
@@ -72,6 +76,89 @@ def _tokenize_version(value: str) -> dict[str, int | None]:
 def _quiet_version(runner: CliRunner, project_dir: Path) -> str:
     result = runner.invoke(cli, ["version", "--quiet"], catch_exceptions=False)
     return result.output.strip()
+
+
+def test_save_project_version_relative_manifest_does_not_crash(tmp_path: Path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    (root / "pyproject.toml").write_text(
+        """[project]
+name = "pkg"
+version = "1.0.0"
+"""
+    )
+    project = Project(
+        name="pkg",
+        version=Version(current="1.0.0", previous=None),
+        manifest=Path("pyproject.toml"),
+    )
+    save_project_version(project, base_dir=root)
+    data = yaml.safe_load((root / "version.yml").read_text())
+    assert data["manifest"] == "pyproject.toml"
+
+
+def test_save_project_version_absolute_manifest_inside_root_is_relative_posix(tmp_path: Path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    manifest = root / "pyproject.toml"
+    manifest.write_text(
+        """[project]
+name = "pkg"
+version = "2.0.0"
+"""
+    )
+    project = Project(
+        name="pkg",
+        version=Version(current="2.0.0", previous=None),
+        manifest=manifest,
+    )
+    save_project_version(project, base_dir=root)
+    data = yaml.safe_load((root / "version.yml").read_text())
+    assert data["manifest"] == "pyproject.toml"
+
+
+def test_save_project_version_manifest_outside_root_stores_absolute_posix(tmp_path: Path):
+    root = tmp_path / "proj"
+    root.mkdir()
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    manifest = outside / "pyproject.toml"
+    manifest.write_text(
+        """[project]
+name = "pkg"
+version = "3.0.0"
+"""
+    )
+    project = Project(
+        name="pkg",
+        version=Version(current="3.0.0", previous=None),
+        manifest=manifest,
+    )
+    save_project_version(project, base_dir=root)
+    data = yaml.safe_load((root / "version.yml").read_text())
+    assert data["manifest"] == manifest.resolve().as_posix()
+
+
+def test_svt_bump_skip_sync_with_relative_manifest_in_version_yml(
+    runner: CliRunner, project_dir: Path
+):
+    _write_version_file(
+        project_dir,
+        name="pkg",
+        current="1.0.0",
+        manifest="pyproject.toml",
+    )
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "pkg"
+version = "1.0.0"
+"""
+    )
+    result = runner.invoke(cli, ["bump", "--skip-sync"], catch_exceptions=False)
+    assert result.exit_code == 0
+    data = _read_version_file(project_dir)
+    assert data["manifest"] == "pyproject.toml"
+    assert data["version"]["current"] == "1.0.1"
 
 
 def test_svt_init_creates_version_file(runner: CliRunner, project_dir: Path):
