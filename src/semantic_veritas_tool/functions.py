@@ -71,7 +71,7 @@ def read_project_version(base_dir: Path | None = None) -> Project:
 def save_project_version(project: Project, base_dir: Path | None = None) -> None:
     serialized_manifest: str | None = None
     if project.manifest is not None:
-        serialized_manifest = str(project.manifest)
+        serialized_manifest = str(project.manifest.relative_to(base_dir or Path.cwd()).as_posix())
 
     payload = {
         "name": project.name,
