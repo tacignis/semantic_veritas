@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from datetime import datetime
 from pathlib import Path
 import tomllib
@@ -18,6 +19,13 @@ from semantic_veritas.data_models import Project, SEMVER_PATTERN, SEMVER_TAG_PAT
 DEFAULT_VERSION = "0.1.0"
 VERSION_FILE_NAME = "version.yml"
 PREVIOUS_VERSION_LABEL = " (previous version)"
+
+_AMBIGUOUS_LOCK_MSG = (
+    "Both poetry.lock and uv.lock are present; remove one lock file or use --skip-sync."
+)
+_NO_LOCK_MSG = (
+    "No poetry.lock or uv.lock found; add one or use --skip-sync to skip package-manager sync."
+)
 
 
 def version_file_path(base_dir: Path | None = None) -> Path:
@@ -68,6 +76,52 @@ def read_project_version(base_dir: Path | None = None) -> Project:
     return result
 
 
+def detect_python_package_manager(base_dir: Path | None = None) -> str:
+    cwd = base_dir or Path.cwd()
+    has_poetry = (cwd / "poetry.lock").is_file()
+    has_uv = (cwd / "uv.lock").is_file()
+    if has_poetry and has_uv:
+        raise ValueError(_AMBIGUOUS_LOCK_MSG)
+    if has_poetry:
+        result = "poetry"
+    elif has_uv:
+        result = "uv"
+    else:
+        raise ValueError(_NO_LOCK_MSG)
+    return result
+
+
+def run_python_package_manager_version_set(
+    tool: str,
+    version: str,
+    base_dir: Path | None = None,
+) -> None:
+    cwd = base_dir or Path.cwd()
+    if tool == "poetry":
+        argv = ["poetry", "version", version]
+    elif tool == "uv":
+        argv = ["uv", "version", version]
+    else:
+        raise ValueError(f"unknown package manager: {tool!r}")
+    completed = subprocess.run(
+        argv,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        stderr = (completed.stderr or "").strip()
+        stdout = (completed.stdout or "").strip()
+        detail = stderr or stdout or f"exit {completed.returncode}"
+        raise RuntimeError(f"{' '.join(argv)} failed: {detail}")
+
+
+def sync_python_package_version(version: str, base_dir: Path | None = None) -> None:
+    tool = detect_python_package_manager(base_dir)
+    run_python_package_manager_version_set(tool, version, base_dir)
+
+
 def save_project_version(project: Project, base_dir: Path | None = None) -> None:
     serialized_manifest: str | None = None
     if project.manifest is not None:
@@ -93,7 +147,7 @@ def build_tag_message(project_name: str, version: str, note: str | None) -> str:
     return message
 
 
-def create_and_push_git_tag(version: str, message: str, repo_dir: Path | None = None) -> None:
+def create_git_tag(version: str, message: str, repo_dir: Path | None = None) -> None:
     repo = Repo(repo_dir or Path.cwd(), search_parent_directories=True)
     existing = {tag.name for tag in repo.tags}
     if version in existing:
@@ -104,8 +158,11 @@ def create_and_push_git_tag(version: str, message: str, repo_dir: Path | None = 
     except GitCommandError as exc:
         raise RuntimeError("tag creation failed") from exc
 
+
+def push_git_tag(version: str, repo_dir: Path | None = None) -> None:
+    repo = Repo(repo_dir or Path.cwd(), search_parent_directories=True)
     if not repo.remotes:
-        raise RuntimeError("tag push failed")
+        raise RuntimeError("no remote configured for tag push")
 
     push_infos = repo.remotes[0].push(version)
     failed = False
@@ -115,6 +172,14 @@ def create_and_push_git_tag(version: str, message: str, repo_dir: Path | None = 
             break
     if failed:
         raise RuntimeError("tag push failed")
+
+
+def delete_local_git_tag(version: str, repo_dir: Path | None = None) -> None:
+    repo = Repo(repo_dir or Path.cwd(), search_parent_directories=True)
+    try:
+        repo.delete_tag(version)
+    except GitCommandError:
+        pass
 
 
 def discover_known_manifests(base_dir: Path | None = None) -> list[Path]:

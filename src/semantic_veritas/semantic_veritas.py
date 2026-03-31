@@ -16,12 +16,15 @@ from semantic_veritas.functions import (
     PREVIOUS_VERSION_LABEL,
     build_tag_message,
     bump_version,
-    create_and_push_git_tag,
+    create_git_tag,
+    delete_local_git_tag,
     discover_known_manifests,
     is_supported_manifest,
     parse_manifest,
+    push_git_tag,
     read_project_version,
     save_project_version,
+    sync_python_package_version,
     validate_version,
     version_file_path,
 )
@@ -162,14 +165,24 @@ def version(
     if tag is not None:
         tag_message = build_tag_message(project.name, requested_version, tag)
         try:
-            create_and_push_git_tag(requested_version, tag_message)
-            typer.echo("Tag created and pushed")
+            create_git_tag(requested_version, tag_message)
         except ValueError:
             typer.echo("Tag already exists")
             raise typer.Exit(code=1)
-        except Exception:
+        except RuntimeError:
             typer.echo("Tag creation failed. Please investigate with git commands.")
             raise typer.Exit(code=1)
+        try:
+            push_git_tag(requested_version)
+        except RuntimeError:
+            delete_local_git_tag(requested_version)
+            typer.echo(
+                "Tag was created locally but could not be pushed. "
+                "The local tag was removed if present.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        typer.echo("Tag created and pushed")
 
     output = f"{project.name} v{requested_version}"
     if quiet:
@@ -192,6 +205,11 @@ def bump(
     patch: bool = typer.Option(False, "--patch", "-z"),
     build: bool = typer.Option(False, "--build", "-b"),
     tag: str | None = typer.Option(None, "--tag", "-t"),
+    skip_sync: bool = typer.Option(
+        False,
+        "--skip-sync",
+        help="Skip syncing pyproject.toml via uv or poetry.",
+    ),
 ):
     """
     Bump the version.
@@ -222,19 +240,52 @@ def bump(
     )
     save_project_version(updated_project)
 
+    if not skip_sync:
+        try:
+            sync_python_package_version(new_version)
+        except ValueError as exc:
+            save_project_version(project)
+            typer.echo(
+                f"Package manager configuration error ({exc}). "
+                "version.yml was reverted. "
+                "Use --skip-sync to skip this step.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        except RuntimeError as exc:
+            save_project_version(project)
+            typer.echo(
+                f"Package manager sync failed ({exc}). "
+                "version.yml was reverted. "
+                "Use --skip-sync to skip this step.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+
     if tag is not None:
         tag_message = build_tag_message(project.name, new_version, tag)
         try:
-            create_and_push_git_tag(new_version, tag_message)
-            typer.echo("Tag created and pushed")
+            create_git_tag(new_version, tag_message)
         except ValueError:
             save_project_version(project)
             typer.echo("Tag already exists")
             raise typer.Exit(code=1)
-        except Exception:
+        except RuntimeError:
             save_project_version(project)
             typer.echo("Tag creation failed. Please investigate with git commands.")
             raise typer.Exit(code=1)
+        try:
+            push_git_tag(new_version)
+        except RuntimeError:
+            save_project_version(project)
+            delete_local_git_tag(new_version)
+            typer.echo(
+                "Tag push failed after creating the tag. "
+                "version.yml was reverted and the local tag was removed if present.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        typer.echo("Tag created and pushed")
 
     typer.echo(f"{project.name} v{old_version} -> v{new_version}")
 
@@ -268,15 +319,26 @@ def set_version(
     if tag is not None:
         tag_message = build_tag_message(project.name, new_version, tag)
         try:
-            create_and_push_git_tag(new_version, tag_message)
-            typer.echo("Tag created and pushed")
+            create_git_tag(new_version, tag_message)
         except ValueError:
             save_project_version(project)
             typer.echo("Tag already exists")
             raise typer.Exit(code=1)
-        except Exception:
+        except RuntimeError:
             save_project_version(project)
             typer.echo("Tag creation failed. Please investigate with git commands.")
             raise typer.Exit(code=1)
+        try:
+            push_git_tag(new_version)
+        except RuntimeError:
+            save_project_version(project)
+            delete_local_git_tag(new_version)
+            typer.echo(
+                "Tag push failed after creating the tag. "
+                "version.yml was reverted and the local tag was removed if present.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        typer.echo("Tag created and pushed")
 
     typer.echo(f"{project.name} v{old_version} -> v{new_version}")

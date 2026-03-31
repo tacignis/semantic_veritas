@@ -3,13 +3,14 @@
 # Description: Tests for the semantic-veritas-tool.
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
 from typer.testing import CliRunner
 
 from semantic_veritas.data_models import SEMVER_PATTERN
-from semantic_veritas.functions import validate_version
+from semantic_veritas.functions import detect_python_package_manager, validate_version
 from semantic_veritas.semantic_veritas import cli
 
 
@@ -303,11 +304,189 @@ def test_svt_bump_missing_file_fails(runner: CliRunner, project_dir: Path):
     assert "run `svt init`" in result.output.lower()
 
 
+@patch("semantic_veritas.semantic_veritas.sync_python_package_version")
+def test_svt_bump_default_calls_sync_helper(
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    _write_version_file(project_dir, name="project_name", current="1.2.3")
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    mock_sync.assert_called_once_with("1.2.4")
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.4"
+
+
+@patch("semantic_veritas.semantic_veritas.sync_python_package_version")
+def test_svt_bump_sync_failure_reverts_version_yml_and_exits(
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    mock_sync.side_effect = RuntimeError("sync failed")
+    _write_version_file(project_dir, name="project_name", current="1.2.3")
+
+    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    mock_sync.assert_called_once_with("1.2.4")
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.3"
+    assert _read_version_file(project_dir)["version"]["previous"] is None
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "--skip-sync" in combined
+    assert "reverted" in combined.lower()
+
+
+@patch("semantic_veritas.semantic_veritas.sync_python_package_version")
+def test_svt_bump_skip_sync_does_not_call_sync_helper(
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    _write_version_file(project_dir, name="project_name", current="1.2.3")
+
+    result = runner.invoke(cli, ["bump", "--skip-sync"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    mock_sync.assert_not_called()
+
+
+@patch("semantic_veritas.semantic_veritas.sync_python_package_version")
+@patch("semantic_veritas.semantic_veritas.create_git_tag")
+@patch("semantic_veritas.semantic_veritas.push_git_tag")
+@patch("semantic_veritas.semantic_veritas.delete_local_git_tag")
+def test_svt_bump_tag_push_failure_reverts_version_and_deletes_local_tag(
+    mock_delete_local: MagicMock,
+    mock_push: MagicMock,
+    mock_create: MagicMock,
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    _write_version_file(project_dir, name="project_name", current="1.2.3")
+    mock_push.side_effect = RuntimeError("tag push failed")
+
+    result = runner.invoke(
+        cli,
+        ["bump", "--skip-sync", "--tag", "release"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 1
+    mock_create.assert_called_once()
+    mock_push.assert_called_once_with("1.2.4")
+    mock_delete_local.assert_called_once_with("1.2.4")
+    mock_sync.assert_not_called()
+    assert _read_version_file(project_dir)["version"]["current"] == "1.2.3"
+    assert _read_version_file(project_dir)["version"]["previous"] is None
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "reverted" in combined.lower()
+    assert "local tag" in combined.lower()
+
+
+@patch("semantic_veritas.semantic_veritas.sync_python_package_version")
+@patch("semantic_veritas.semantic_veritas.push_git_tag")
+@patch("semantic_veritas.semantic_veritas.create_git_tag")
+def test_svt_bump_with_tag_calls_create_and_push_helpers(
+    mock_create: MagicMock,
+    mock_push: MagicMock,
+    mock_sync: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    _write_version_file(project_dir, name="project_name", current="1.2.3")
+
+    result = runner.invoke(
+        cli,
+        ["bump", "--skip-sync", "--tag", "release"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    mock_create.assert_called_once()
+    assert mock_create.call_args[0][0] == "1.2.4"
+    mock_push.assert_called_once_with("1.2.4")
+    mock_sync.assert_not_called()
+    assert "Tag created and pushed" in result.output
+
+
+@patch("semantic_veritas.semantic_veritas.push_git_tag")
+@patch("semantic_veritas.semantic_veritas.create_git_tag")
+def test_svt_version_with_tag_calls_create_and_push_helpers(
+    mock_create: MagicMock,
+    mock_push: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    _write_version_file(project_dir, name="project_name", current="1.2.3")
+
+    result = runner.invoke(
+        cli,
+        ["version", "--tag", "note"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    mock_create.assert_called_once()
+    assert mock_create.call_args[0][0] == "1.2.3"
+    mock_push.assert_called_once_with("1.2.3")
+    assert "Tag created and pushed" in result.output
+
+
+@patch("semantic_veritas.semantic_veritas.push_git_tag")
+@patch("semantic_veritas.semantic_veritas.create_git_tag")
+def test_svt_set_with_tag_calls_create_and_push_helpers(
+    mock_create: MagicMock,
+    mock_push: MagicMock,
+    runner: CliRunner,
+    project_dir: Path,
+):
+    _write_version_file(project_dir, name="project_name", current="1.2.3")
+
+    result = runner.invoke(
+        cli,
+        ["set", "2.0.0", "--tag", "ga"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    mock_create.assert_called_once()
+    assert mock_create.call_args[0][0] == "2.0.0"
+    mock_push.assert_called_once_with("2.0.0")
+    assert "Tag created and pushed" in result.output
+
+
+def test_detect_python_package_manager_uv_lock_only(tmp_path: Path):
+    (tmp_path / "uv.lock").write_text("")
+    result = detect_python_package_manager(tmp_path)
+    assert result == "uv"
+
+
+def test_detect_python_package_manager_poetry_lock_only(tmp_path: Path):
+    (tmp_path / "poetry.lock").write_text("")
+    result = detect_python_package_manager(tmp_path)
+    assert result == "poetry"
+
+
+def test_detect_python_package_manager_both_locks_raises(tmp_path: Path):
+    (tmp_path / "uv.lock").write_text("")
+    (tmp_path / "poetry.lock").write_text("")
+    with pytest.raises(ValueError, match="Both poetry.lock and uv.lock"):
+        detect_python_package_manager(tmp_path)
+
+
+def test_detect_python_package_manager_no_lock_raises(tmp_path: Path):
+    with pytest.raises(ValueError, match="No poetry.lock or uv.lock"):
+        detect_python_package_manager(tmp_path)
+
+
 def test_svt_bump_default(runner: CliRunner, project_dir: Path):
     _write_version_file(project_dir, name="project_name", current="1.2.3")
     old_version = _tokenize_version(_quiet_version(runner, project_dir))
 
-    result = runner.invoke(cli, ["bump"], catch_exceptions=False)
+    result = runner.invoke(cli, ["bump", "--skip-sync"], catch_exceptions=False)
 
     assert result.exit_code == 0
     new_version = _tokenize_version(_quiet_version(runner, project_dir))
@@ -322,7 +501,7 @@ def test_svt_bump_major(runner: CliRunner, project_dir: Path):
     _write_version_file(project_dir, name="project_name", current="1.2.3")
     old_version = _tokenize_version(_quiet_version(runner, project_dir))
 
-    result = runner.invoke(cli, ["bump", "--major"], catch_exceptions=False)
+    result = runner.invoke(cli, ["bump", "--major", "--skip-sync"], catch_exceptions=False)
 
     assert result.exit_code == 0
     new_version = _tokenize_version(_quiet_version(runner, project_dir))
@@ -336,7 +515,7 @@ def test_svt_bump_minor(runner: CliRunner, project_dir: Path):
     _write_version_file(project_dir, name="project_name", current="1.2.3")
     old_version = _tokenize_version(_quiet_version(runner, project_dir))
 
-    result = runner.invoke(cli, ["bump", "--minor"], catch_exceptions=False)
+    result = runner.invoke(cli, ["bump", "--minor", "--skip-sync"], catch_exceptions=False)
 
     assert result.exit_code == 0
     new_version = _tokenize_version(_quiet_version(runner, project_dir))
@@ -350,7 +529,7 @@ def test_svt_bump_patch(runner: CliRunner, project_dir: Path):
     _write_version_file(project_dir, name="project_name", current="1.2.3")
     old_version = _tokenize_version(_quiet_version(runner, project_dir))
 
-    result = runner.invoke(cli, ["bump", "--patch"], catch_exceptions=False)
+    result = runner.invoke(cli, ["bump", "--patch", "--skip-sync"], catch_exceptions=False)
 
     assert result.exit_code == 0
     new_version = _tokenize_version(_quiet_version(runner, project_dir))
@@ -363,7 +542,7 @@ def test_svt_bump_patch(runner: CliRunner, project_dir: Path):
 def test_svt_bump_build_from_implicit_zero(runner: CliRunner, project_dir: Path):
     _write_version_file(project_dir, name="project_name", current="1.2.3")
 
-    result = runner.invoke(cli, ["bump", "--build"], catch_exceptions=False)
+    result = runner.invoke(cli, ["bump", "--build", "--skip-sync"], catch_exceptions=False)
 
     assert result.exit_code == 0
     new_version = _tokenize_version(_quiet_version(runner, project_dir))
@@ -373,7 +552,7 @@ def test_svt_bump_build_from_implicit_zero(runner: CliRunner, project_dir: Path)
 def test_svt_bump_build_major(runner: CliRunner, project_dir: Path):
     _write_version_file(project_dir, name="project_name", current="1.2.3.9")
 
-    result = runner.invoke(cli, ["bump", "--build", "--major"], catch_exceptions=False)
+    result = runner.invoke(cli, ["bump", "--build", "--major", "--skip-sync"], catch_exceptions=False)
 
     assert result.exit_code == 0
     new_version = _tokenize_version(_quiet_version(runner, project_dir))
@@ -383,7 +562,7 @@ def test_svt_bump_build_major(runner: CliRunner, project_dir: Path):
 def test_svt_bump_build_minor(runner: CliRunner, project_dir: Path):
     _write_version_file(project_dir, name="project_name", current="1.2.3.9")
 
-    result = runner.invoke(cli, ["bump", "--build", "--minor"], catch_exceptions=False)
+    result = runner.invoke(cli, ["bump", "--build", "--minor", "--skip-sync"], catch_exceptions=False)
 
     assert result.exit_code == 0
     new_version = _tokenize_version(_quiet_version(runner, project_dir))
@@ -393,7 +572,7 @@ def test_svt_bump_build_minor(runner: CliRunner, project_dir: Path):
 def test_svt_bump_build_patch(runner: CliRunner, project_dir: Path):
     _write_version_file(project_dir, name="project_name", current="1.2.3.9")
 
-    result = runner.invoke(cli, ["bump", "--build", "--patch"], catch_exceptions=False)
+    result = runner.invoke(cli, ["bump", "--build", "--patch", "--skip-sync"], catch_exceptions=False)
 
     assert result.exit_code == 0
     new_version = _tokenize_version(_quiet_version(runner, project_dir))

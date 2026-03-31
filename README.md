@@ -1,12 +1,8 @@
-# semantic-veritas-tool
+# semantic-veritas
 
-CLI (`svt`) for semantic versioning: read, bump, set, and optionally create git tags. Expects **`version.yml`** in the project root (current working directory).
+CLI **`svt`** for reading, bumping, and setting semver in a root **`version.yml`**, with optional git tags. All commands use the current working directory as the project root.
 
-## Breaking change: `version.txt` removed
-
-Older releases used `version.txt`. **Current releases do not read `version.txt`.** There is no automatic migration.
-
-**Migrate manually:** delete or ignore `version.txt`, add `version.yml` (see schema below). Either hand-write it from your old version string or run `svt init` (optionally `svt init --manifest <file>`) to create the file and pull name/version from a supported manifest when possible.
+**Requires:** Python 3.14+ (see `pyproject.toml`). Install deps with `uv sync`. Run `uv run svt …`, or install the package so the `svt` entry point is on your `PATH`.
 
 ## `version.yml` schema
 
@@ -15,42 +11,88 @@ name: project_name
 version:
   current: x.y.z      # or x.y.z.b (optional fourth segment)
   previous: x.y.z     # optional; same semver forms as current
-manifest: path        # optional; string path or null (e.g. pyproject.toml)
+manifest: path        # optional; relative path string or null
 ```
 
-- **`name`** — project name (string).
-- **`version.current`** — required; semver `X.Y.Z` or `X.Y.Z.b`.
-- **`version.previous`** — optional.
-- **`manifest`** — optional; path to the manifest used at init, or omitted/`null`.
+| Field | Notes |
+|-------|--------|
+| `name` | Required. |
+| `version.current` | Required. `X.Y.Z` or `X.Y.Z.b`. |
+| `version.previous` | Optional. |
+| `manifest` | Optional. Path written at init (relative when saved); used to resolve name/version when present. |
 
-## Example
+Invalid YAML, missing required fields, or bad semver values produce a short message and exit `1`. If `version.yml` is missing, commands print that you should run `svt init`.
 
-```yaml
-name: my-app
-version:
-  current: 1.4.2
-  previous: 1.4.1
-manifest: pyproject.toml
-```
+## Migration from `version.txt`
 
-Invalid YAML or a missing `name` / `version.current` causes commands to exit with a short error (no stack trace). If `version.yml` is missing, commands tell you to run `svt init`.
+Older releases used `version.txt`; **current releases only read `version.yml`.** There is no automatic migration. Replace with a `version.yml` matching the schema above, or run `svt init` (optionally `--manifest <file>`) and adjust as needed.
 
 ## Commands
 
-| Command | Purpose |
-|--------|---------|
-| `svt init` | Create `version.yml`. Optional `--manifest <path>` (`pyproject.toml`, `package.json`, `Cargo.toml`, or `go.mod`). With no manifest, uses cwd directory name and `0.1.0`; multiple manifests in cwd prompt for choice. |
-| `svt version` | Print version. `--quiet` / `-q`, `--name-only` / `-n`, `--docker-format` / `-d`, `--previous` / `-p` (uses `version.previous`; non-quiet default output is `X.Y.Z (previous version)` without the project name). Optional `--tag` / `-t` (create and push git tag). |
-| `svt bump` | Bump `version.current`; old value becomes `previous`. With no `--major` / `--minor` / `--patch` flags, bumps patch. Otherwise use exactly one of `--major` / `-x`, `--minor` / `-y`, or `--patch` / `-z`. `--build` / `-b` alone increments the fourth segment; with major/minor/patch it sets build to `0` on the result. Optional `--tag` / `-t`. |
-| `svt set <version>` | Set `version.current` to an explicit semver. Optional `--tag` / `-t`. |
+### `svt init`
 
-Examples:
+Creates `version.yml` in the cwd and prints `version.yml created`.
+
+| Situation | Behavior |
+|-----------|----------|
+| `--manifest <path>` | Uses that file if it exists and is a supported type (`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`). |
+| No `--manifest`, 0 manifests in cwd | `name` = directory name, `version.current` = `0.1.0`. |
+| No `--manifest`, exactly 1 manifest | Uses it automatically. |
+| No `--manifest`, 2+ manifests | Interactive prompt to pick one. |
+
+Name and version are taken from the manifest when possible; `go.mod` uses the module path tail for the name and may infer version from git tags.
+
+### `svt version`
+
+Prints a version string. With `--previous` / `-p`, uses `version.previous` (fails if unset).
+
+| Flags | Output (non-error) |
+|-------|---------------------|
+| *(default)* | `{name} v{version}` |
+| `-q` / `--quiet` | version only |
+| `-n` / `--name-only` | name only |
+| `-d` / `--docker-format` | `{name}/{name}:v{version}` |
+| `-p` (and not `-q`/`-n`/`-d`) | `{version} (previous version)` |
+
+Optional `--tag` / `-t <note>`: create and push a git tag named after the printed version; `note` is appended to the tag message. This command does not modify `version.yml`. If the tag is created locally but **push fails**, the **local tag is removed if present**; exit non-zero.
+
+### `svt bump`
+
+Bumps `version.current`; the old current value becomes `version.previous`.
+
+- **Default** (no `--major` / `--minor` / `--patch` / `--build`): patch +1.
+- **Exactly one** of `--major` / `-x`, `--minor` / `-y`, or `--patch` / `-z` (mutually exclusive).
+- **`--build` / `-b` alone**: increment the fourth segment (or start it at `1` if absent).
+- **`-b` with `-x`/`-y`/`-z`**: after the semantic bump, set the fourth segment to `0`. Without `-b`, a major/minor/patch bump **drops** an existing fourth segment.
+
+**Package-manager alignment (Python):** By default, after `version.yml` is written, `svt` picks **uv** or **poetry** from lockfiles in the project root and runs **`uv version <semver>`** or **`poetry version <semver>`** so `pyproject.toml` matches the bump. This is not `uv sync` / `poetry install`; it is the version-setting step only.
+
+| Lockfiles in cwd | Behavior |
+|------------------|----------|
+| `uv.lock` only | `uv version …` |
+| `poetry.lock` only | `poetry version …` |
+| Both `uv.lock` and `poetry.lock` | Fails: ambiguous; remove one lockfile or use `--skip-sync`. |
+| Neither | Fails: add a lockfile or use `--skip-sync`. |
+
+**`svt bump --skip-sync`:** Skips package-manager alignment entirely (no `uv`/`poetry` invocation).
+
+**On alignment or config failure:** If lockfiles are ambiguous or missing, or if the `uv`/`poetry` version command fails (non-zero exit), `version.yml` is **reverted** to its pre-bump state and the command exits **non-zero**. Messages point at `--skip-sync` when skipping alignment is appropriate.
+
+**`--tag` / `-t <note>` (optional):** After a successful bump (and alignment unless `--skip-sync`), creates the semver tag and pushes it. **Tag already exists** or **tag creation failure:** `version.yml` is reverted to the pre-bump file, exit non-zero. **Tag push failure** (after the tag was created locally): `version.yml` is reverted and the **local tag is removed if present**, exit non-zero.
+
+### `svt set <version>`
+
+Sets `version.current` to the argument; old current becomes `previous`. Argument must match `X.Y.Z` or `X.Y.Z.b`. **No** package-manager alignment (`uv`/`poetry` is not run). Optional `--tag` / `-t <note>`: same tag semantics as **`svt bump --tag`**—revert `version.yml` on duplicate tag, tag creation failure, or push failure; remove the local tag on push failure.
+
+## Examples
 
 ```bash
-svt init --manifest pyproject.toml
-svt version              # my-app v1.4.2
-svt version -q           # 1.4.2
-svt version -p           # 1.4.1 (previous version)
-svt bump --patch
-svt set 2.0.0
+uv run svt init --manifest pyproject.toml   # or: svt init …
+uv run svt version                          # my-app v1.4.2
+uv run svt version -q                       # 1.4.2
+uv run svt version -p                       # 1.4.1 (previous version)
+uv run svt bump                             # patch bump (default)
+uv run svt bump --minor
+uv run svt bump --skip-sync                 # bump only version.yml (no uv/poetry)
+uv run svt set 2.0.0
 ```
