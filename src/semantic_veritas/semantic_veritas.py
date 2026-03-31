@@ -412,7 +412,10 @@ def bump(
     skip_sync: bool = typer.Option(
         False,
         "--skip-sync",
-        help="Skip Python package-manager sync (uv/poetry) when it would otherwise run.",
+        help=(
+            "Skip package-manager alignment for this bump "
+            "(currently uv/poetry when applicable)."
+        ),
     ),
 ):
     """
@@ -452,7 +455,7 @@ def bump(
             typer.echo(
                 f"Package manager configuration error ({exc}). "
                 "version.yml was reverted. "
-                "Use --skip-sync to skip Python sync when appropriate.",
+                "Use --skip-sync to skip package-manager alignment when appropriate.",
                 err=True,
             )
             raise typer.Exit(code=1)
@@ -464,16 +467,16 @@ def bump(
                 typer.echo(
                     f"Package manager configuration error ({exc}). "
                     "version.yml was reverted. "
-                    "Use --skip-sync to skip this step.",
+                    "Use --skip-sync to skip package-manager alignment.",
                     err=True,
                 )
                 raise typer.Exit(code=1)
             except RuntimeError as exc:
                 save_project_version(project)
                 typer.echo(
-                    f"Package manager sync failed ({exc}). "
+                    f"Package manager alignment failed ({exc}). "
                     "version.yml was reverted. "
-                    "Use --skip-sync to skip this step.",
+                    "Use --skip-sync to skip package-manager alignment.",
                     err=True,
                 )
                 raise typer.Exit(code=1)

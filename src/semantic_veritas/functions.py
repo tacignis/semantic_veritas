@@ -25,7 +25,7 @@ _AMBIGUOUS_LOCK_MSG = (
     "Both poetry.lock and uv.lock are present; remove one lock file or use --skip-sync."
 )
 _NO_LOCK_MSG = (
-    "No poetry.lock or uv.lock found; add one or use --skip-sync to skip package-manager sync."
+    "No poetry.lock or uv.lock found; add one or use --skip-sync to skip package-manager alignment."
 )
 _POLYGLOT_NO_LOCK_MSG = (
     "Multiple manifests (pyproject.toml, package.json, Cargo.toml, or go.mod) were found with no "
@@ -34,7 +34,7 @@ _POLYGLOT_NO_LOCK_MSG = (
 )
 _PYPROJECT_NO_LOCK_MSG = (
     "pyproject.toml is authoritative for this bump but neither poetry.lock nor uv.lock was found. "
-    "Add a lockfile or use --skip-sync to skip package-manager sync."
+    "Add a lockfile or use --skip-sync to skip package-manager alignment."
 )
 _LOCK_WITHOUT_PYPROJECT_MSG = (
     "A poetry.lock or uv.lock file is present but pyproject.toml was not found; fix the project "
