@@ -10,8 +10,8 @@ import typer
 import yaml
 from pydantic import ValidationError
 
-from semantic_veritas_tool.data_models import Project, Version
-from semantic_veritas_tool.functions import (
+from semantic_veritas.data_models import Project, Version
+from semantic_veritas.functions import (
     DEFAULT_VERSION,
     PREVIOUS_VERSION_LABEL,
     build_tag_message,

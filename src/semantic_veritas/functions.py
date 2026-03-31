@@ -12,7 +12,7 @@ import tomllib
 from git import GitCommandError, PushInfo, Repo
 import yaml
 
-from semantic_veritas_tool.data_models import Project, SEMVER_PATTERN, SEMVER_TAG_PATTERN
+from semantic_veritas.data_models import Project, SEMVER_PATTERN, SEMVER_TAG_PATTERN
 
 
 DEFAULT_VERSION = "0.1.0"
