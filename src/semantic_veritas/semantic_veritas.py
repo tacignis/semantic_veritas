@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import json
+import tomllib
 from pathlib import Path
 
 import typer
@@ -36,6 +38,27 @@ cli = typer.Typer()
 def _missing_version_file_message() -> str:
     message = "version.yml was not found. Please run `svt init`."
     return message
+
+
+def _parse_manifest_or_exit(path: Path, base_dir: Path) -> tuple[str, str | None]:
+    result: tuple[str, str | None]
+    try:
+        result = parse_manifest(path, base_dir=base_dir)
+    except (json.JSONDecodeError, tomllib.TOMLDecodeError):
+        typer.echo(
+            f"Manifest could not be parsed: {path}. "
+            "Fix the file syntax or pass a different --manifest path.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    except (OSError, UnicodeDecodeError):
+        typer.echo(
+            f"Manifest could not be read: {path}. "
+            "Check permissions, UTF-8 encoding, or pass --manifest.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    return result
 
 
 def _load_project() -> Project:
@@ -87,10 +110,18 @@ def _resolve_manifest(manifest: str | None) -> Path | None:
         if not candidate.is_absolute():
             candidate = Path.cwd() / candidate
         if not candidate.exists():
-            typer.echo("Manifest path does not exist.")
+            typer.echo(
+                f"Manifest does not exist: {candidate}. "
+                "Fix the path or pass a different --manifest value.",
+                err=True,
+            )
             raise typer.Exit(code=1)
         if not is_supported_manifest(candidate):
-            typer.echo("The selected path is not a supported manifest type.")
+            typer.echo(
+                f"Unsupported manifest type: {candidate.name}. "
+                "Use pyproject.toml, package.json, Cargo.toml, or go.mod.",
+                err=True,
+            )
             raise typer.Exit(code=1)
         selected_manifest = candidate
     else:
@@ -101,6 +132,90 @@ def _resolve_manifest(manifest: str | None) -> Path | None:
             selected_manifest = _prompt_for_manifest(manifests)
 
     return selected_manifest
+
+
+def _normalize_manifest_path(path: Path | None, base_dir: Path) -> Path | None:
+    normalized: Path | None = None
+    if path is not None:
+        candidate = path if path.is_absolute() else base_dir / path
+        normalized = candidate.resolve()
+    return normalized
+
+
+def _manifest_paths_equal(
+    left: Path | None,
+    right: Path | None,
+    base_dir: Path,
+) -> bool:
+    equal = False
+    left_norm = _normalize_manifest_path(left, base_dir)
+    right_norm = _normalize_manifest_path(right, base_dir)
+    if left_norm is None and right_norm is None:
+        equal = True
+    elif left_norm is not None and right_norm is not None:
+        equal = left_norm == right_norm
+    return equal
+
+
+def _resolve_authoritative_manifest(
+    manifest_option: str | None,
+    project: Project,
+) -> Path:
+    cwd = Path.cwd()
+    resolved: Path | None = None
+    if manifest_option:
+        candidate = Path(manifest_option)
+        if not candidate.is_absolute():
+            candidate = cwd / candidate
+        if not candidate.exists():
+            typer.echo(
+                f"Manifest does not exist: {candidate}. "
+                "Fix the path or omit --manifest to use version.yml or discovery.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if not is_supported_manifest(candidate):
+            typer.echo(
+                f"Unsupported manifest type: {candidate.name}. "
+                "Use pyproject.toml, package.json, Cargo.toml, or go.mod.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        resolved = candidate.resolve()
+    elif project.manifest is not None:
+        stored = project.manifest
+        candidate = stored if stored.is_absolute() else cwd / stored
+        if not candidate.exists():
+            typer.echo(
+                f"Stored manifest in version.yml does not exist: {candidate}. "
+                "Restore the file, update the manifest key in version.yml, or pass --manifest.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if not is_supported_manifest(candidate):
+            typer.echo(
+                f"Stored manifest in version.yml is not a supported type: {candidate.name}. "
+                "Point manifest to pyproject.toml, package.json, Cargo.toml, or go.mod.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        resolved = candidate.resolve()
+    else:
+        manifests = discover_known_manifests()
+        if len(manifests) == 0:
+            typer.echo(
+                "No manifest could be resolved: version.yml has no manifest key and no "
+                "pyproject.toml, package.json, Cargo.toml, or go.mod was found here. "
+                "Add a supported manifest or run `svt init --manifest <path>`.",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if len(manifests) == 1:
+            resolved = manifests[0].resolve()
+        else:
+            resolved = _prompt_for_manifest(manifests).resolve()
+
+    return resolved
 
 
 def _get_requested_version(project: Project, previous: bool) -> str:
@@ -130,7 +245,10 @@ def init(
     project_version = DEFAULT_VERSION
 
     if selected_manifest is not None:
-        parsed_name, parsed_version = parse_manifest(selected_manifest, base_dir=Path.cwd())
+        parsed_name, parsed_version = _parse_manifest_or_exit(
+            selected_manifest,
+            base_dir=Path.cwd(),
+        )
         project_name = parsed_name
         if parsed_version and validate_version(parsed_version):
             project_version = parsed_version
@@ -142,6 +260,52 @@ def init(
     )
     save_project_version(project)
     typer.echo("version.yml created")
+
+
+@cli.command()
+def reconcile(
+    manifest: str | None = typer.Option(
+        None,
+        "--manifest",
+        help="Known manifest path: pyproject.toml, package.json, Cargo.toml, or go.mod",
+    ),
+):
+    """
+    Refresh version.yml name and version from the authoritative manifest.
+    """
+    if not version_file_path().exists():
+        typer.echo(_missing_version_file_message())
+        raise typer.Exit(code=1)
+
+    project = _load_project()
+    base_dir = Path.cwd()
+    authoritative = _resolve_authoritative_manifest(manifest, project)
+    parsed_name, parsed_version = _parse_manifest_or_exit(authoritative, base_dir=base_dir)
+
+    old_current = project.version.current
+    new_current = old_current
+    if parsed_version is not None and validate_version(parsed_version):
+        new_current = parsed_version
+
+    new_previous = project.version.previous
+    if new_current != old_current:
+        new_previous = None
+
+    updated = Project(
+        name=parsed_name,
+        version=Version(current=new_current, previous=new_previous),
+        manifest=authoritative,
+    )
+
+    unchanged = (
+        project.name == updated.name
+        and project.version.current == updated.version.current
+        and project.version.previous == updated.version.previous
+        and _manifest_paths_equal(project.manifest, updated.manifest, base_dir)
+    )
+    if not unchanged:
+        save_project_version(updated)
+        typer.echo("version.yml updated")
 
 
 @cli.command()

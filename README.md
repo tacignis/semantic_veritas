@@ -1,6 +1,6 @@
 # semantic-veritas
 
-CLI **`svt`** for reading, bumping, and setting semver in a root **`version.yml`**, with optional git tags. All commands use the current working directory as the project root.
+CLI **`svt`** for reading, bumping, reconciling, and setting semver in a root **`version.yml`**, with optional git tags. All commands use the current working directory as the project root.
 
 **Requires:** Python 3.14+ (see `pyproject.toml`). Install deps with `uv sync`. Run `uv run svt …`, or install the package so the `svt` entry point is on your `PATH`.
 
@@ -84,6 +84,26 @@ Bumps `version.current`; the old current value becomes `version.previous`.
 
 Sets `version.current` to the argument; old current becomes `previous`. Argument must match `X.Y.Z` or `X.Y.Z.b`. **No** package-manager alignment (`uv`/`poetry` is not run). Optional `--tag` / `-t <note>`: same tag semantics as **`svt bump --tag`**—revert `version.yml` on duplicate tag, tag creation failure, or push failure; remove the local tag on push failure.
 
+### `svt reconcile`
+
+Refreshes **`name`**, **`version.current`**, and the **`manifest`** field in `version.yml` from a manifest file. **Direction:** the manifest is authoritative; `version.yml` is updated to match (not the other way around).
+
+| Resolution | Behavior |
+|--------------|----------|
+| `--manifest <path>` | Use that file; must exist and be a supported type (`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`). |
+| No `--manifest`, `manifest` set in `version.yml` | Use the stored path (must exist and be supported). |
+| No `--manifest`, no stored `manifest` | Same discovery as `svt init`: one manifest in cwd is chosen automatically; several prompt for a choice; none fails with a hint to add a manifest or run `svt init --manifest`. |
+
+**`name`** is taken from the manifest (same rules as **`svt init`**). **`version.current`** is set from the manifest when it parses as a valid semver; otherwise the existing current value is kept.
+
+**`version.previous`:** if **`version.current` changes** as a result of reconcile, **`previous` is cleared to `null`** (reconcile does not preserve the old bump chain when the authoritative version moves).
+
+| Outcome | Behavior |
+|---------|----------|
+| Changed | Writes `version.yml` and prints `version.yml updated`. |
+| No-op | Already aligned (name, current, previous, and resolved manifest path unchanged); exit `0`, no output. |
+| Error | Missing/invalid `version.yml`, manifest path missing / unsupported / unresolvable, or manifest read/parse failure; short message, exit `1`. |
+
 ## Examples
 
 ```bash
@@ -95,4 +115,6 @@ uv run svt bump                             # patch bump (default)
 uv run svt bump --minor
 uv run svt bump --skip-sync                 # bump only version.yml (no uv/poetry)
 uv run svt set 2.0.0
+uv run svt reconcile                        # sync from stored or discovered manifest
+uv run svt reconcile --manifest package.json  # override which manifest is authoritative
 ```

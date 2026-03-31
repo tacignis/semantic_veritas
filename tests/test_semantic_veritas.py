@@ -146,6 +146,38 @@ def test_svt_init_with_unknown_manifest_fails(runner: CliRunner, project_dir: Pa
     assert "supported manifest" in result.output.lower()
 
 
+def test_svt_init_corrupt_manifest_parse_fails_without_traceback(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text("[project\nname = \"broken\"\n")
+
+    result = runner.invoke(cli, ["init"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "could not be parsed" in combined.lower()
+    assert "pyproject.toml" in combined
+    assert "traceback" not in combined.lower()
+    assert not (project_dir / "version.yml").exists()
+
+
+def test_svt_init_manifest_read_decode_fails_without_traceback(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_bytes(b"\xff\xfe\x00")
+
+    result = runner.invoke(cli, ["init"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "could not be read" in combined.lower()
+    assert "pyproject.toml" in combined
+    assert "traceback" not in combined.lower()
+    assert not (project_dir / "version.yml").exists()
+
+
 def test_svt_init_prompts_when_multiple_sources_found(runner: CliRunner, project_dir: Path):
     (project_dir / "pyproject.toml").write_text(
         """[project]
@@ -220,6 +252,7 @@ def test_validate_version_uses_shared_semver_rule():
         ["version"],
         ["bump"],
         ["set", "1.0.0"],
+        ["reconcile"],
     ],
 )
 def test_svt_rejects_malformed_yaml_version_file(
@@ -242,6 +275,7 @@ def test_svt_rejects_malformed_yaml_version_file(
         ["version"],
         ["bump"],
         ["set", "1.0.0"],
+        ["reconcile"],
     ],
 )
 def test_svt_rejects_invalid_schema_version_file(
@@ -650,3 +684,370 @@ def test_svt_init_single_source_does_not_prompt(runner: CliRunner, project_dir: 
 
     assert result.exit_code == 0
     assert "authoritative" not in result.output.lower()
+
+
+def test_svt_reconcile_missing_file_fails(runner: CliRunner, project_dir: Path):
+    result = runner.invoke(cli, ["reconcile"], catch_exceptions=False)
+
+    assert result.exit_code != 0
+    assert "run `svt init`" in result.output.lower()
+
+
+def test_svt_reconcile_updates_stale_name_and_current_from_pyproject(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "python-project"
+version = "2.4.6"
+"""
+    )
+    _write_version_file(
+        project_dir,
+        name="stale-name",
+        current="1.0.0",
+        manifest="pyproject.toml",
+    )
+
+    result = runner.invoke(cli, ["reconcile"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    assert "version.yml updated" in result.output
+    data = _read_version_file(project_dir)
+    assert data["name"] == "python-project"
+    assert data["version"]["current"] == "2.4.6"
+
+
+def test_svt_reconcile_invalid_manifest_semver_updates_name_keeps_current_and_previous(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "python-project"
+version = "not-a-valid-semver"
+"""
+    )
+    _write_version_file(
+        project_dir,
+        name="stale-name",
+        current="1.2.3",
+        previous="0.9.0",
+        manifest="pyproject.toml",
+    )
+
+    result = runner.invoke(cli, ["reconcile"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    assert "version.yml updated" in result.output
+    data = _read_version_file(project_dir)
+    assert data["name"] == "python-project"
+    assert data["version"]["current"] == "1.2.3"
+    assert data["version"]["previous"] == "0.9.0"
+
+
+def test_svt_reconcile_corrupt_manifest_parse_fails_without_traceback(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text("[project\nname = \"broken\"\n")
+    _write_version_file(
+        project_dir,
+        name="x",
+        current="1.0.0",
+        manifest="pyproject.toml",
+    )
+
+    result = runner.invoke(cli, ["reconcile"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "could not be parsed" in combined.lower()
+    assert "pyproject.toml" in combined
+    assert "traceback" not in combined.lower()
+
+
+def test_svt_reconcile_manifest_read_decode_fails_without_traceback(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_bytes(b"\xff\xfe\x00")
+    _write_version_file(
+        project_dir,
+        name="x",
+        current="1.0.0",
+        manifest="pyproject.toml",
+    )
+
+    result = runner.invoke(cli, ["reconcile"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "could not be read" in combined.lower()
+    assert "pyproject.toml" in combined
+    assert "traceback" not in combined.lower()
+
+
+def test_svt_reconcile_manifest_read_oserror_fails_without_traceback(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "python-project"
+version = "1.0.0"
+"""
+    )
+    _write_version_file(
+        project_dir,
+        name="x",
+        current="1.0.0",
+        manifest="pyproject.toml",
+    )
+
+    with patch(
+        "semantic_veritas.semantic_veritas.parse_manifest",
+        side_effect=PermissionError("denied"),
+    ):
+        result = runner.invoke(cli, ["reconcile"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "could not be read" in combined.lower()
+    assert "traceback" not in combined.lower()
+
+
+def test_svt_reconcile_no_op_when_already_aligned(runner: CliRunner, project_dir: Path):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "python-project"
+version = "2.4.6"
+"""
+    )
+    _write_version_file(
+        project_dir,
+        name="python-project",
+        current="2.4.6",
+        manifest="pyproject.toml",
+    )
+
+    before = (project_dir / "version.yml").read_text()
+    result = runner.invoke(cli, ["reconcile"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    assert "version.yml updated" not in result.output
+    assert (project_dir / "version.yml").read_text() == before
+
+
+def test_svt_reconcile_manifest_override_uses_selected_source(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "python-project"
+version = "1.0.0"
+"""
+    )
+    (project_dir / "package.json").write_text('{"name":"node-project","version":"9.9.9"}')
+    _write_version_file(
+        project_dir,
+        name="python-project",
+        current="1.0.0",
+        manifest="pyproject.toml",
+    )
+
+    result = runner.invoke(
+        cli,
+        ["reconcile", "--manifest", "package.json"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 0
+    assert "version.yml updated" in result.output
+    data = _read_version_file(project_dir)
+    assert data["name"] == "node-project"
+    assert data["version"]["current"] == "9.9.9"
+    assert data["manifest"] == "package.json"
+
+
+def test_svt_reconcile_stored_manifest_path_missing_fails(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "python-project"
+version = "1.0.0"
+"""
+    )
+    _write_version_file(
+        project_dir,
+        name="python-project",
+        current="1.0.0",
+        manifest="missing.toml",
+    )
+
+    result = runner.invoke(cli, ["reconcile"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "does not exist" in combined.lower()
+    assert "stored manifest" in combined.lower()
+
+
+def test_svt_reconcile_stored_manifest_unsupported_type_fails(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "other.toml").write_text("[meta]\nname = 'x'\n")
+    _write_version_file(
+        project_dir,
+        name="x",
+        current="1.0.0",
+        manifest="other.toml",
+    )
+
+    result = runner.invoke(cli, ["reconcile"], catch_exceptions=False)
+
+    assert result.exit_code == 1
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "not a supported type" in combined.lower()
+
+
+def test_svt_reconcile_manifest_option_path_missing_fails(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "python-project"
+version = "1.0.0"
+"""
+    )
+    _write_version_file(
+        project_dir,
+        name="python-project",
+        current="1.0.0",
+        manifest="pyproject.toml",
+    )
+
+    result = runner.invoke(
+        cli,
+        ["reconcile", "--manifest", "nowhere.json"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 1
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "does not exist" in combined.lower()
+
+
+def test_svt_reconcile_manifest_option_unsupported_type_fails(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "notes.txt").write_text("hello")
+    _write_version_file(
+        project_dir,
+        name="project_name",
+        current="1.0.0",
+        manifest=None,
+    )
+
+    result = runner.invoke(
+        cli,
+        ["reconcile", "--manifest", "notes.txt"],
+        catch_exceptions=False,
+    )
+
+    assert result.exit_code == 1
+    combined = (result.stderr or "") + (result.stdout or "")
+    assert "unsupported manifest type" in combined.lower()
+
+
+def test_svt_reconcile_discovery_single_manifest_without_stored_key(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "python-project"
+version = "2.4.6"
+"""
+    )
+    _write_version_file(
+        project_dir,
+        name="stale-name",
+        current="0.1.0",
+        manifest=None,
+    )
+
+    result = runner.invoke(cli, ["reconcile"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    assert "version.yml updated" in result.output
+    data = _read_version_file(project_dir)
+    assert data["name"] == "python-project"
+    assert data["version"]["current"] == "2.4.6"
+    assert data["manifest"] == "pyproject.toml"
+
+
+def test_svt_reconcile_discovery_prompts_when_multiple_manifests(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "python-project"
+version = "1.2.3"
+"""
+    )
+    (project_dir / "Cargo.toml").write_text(
+        """[package]
+name = "rust-project"
+version = "3.2.1"
+"""
+    )
+    _write_version_file(
+        project_dir,
+        name="x",
+        current="0.1.0",
+        manifest=None,
+    )
+
+    result = runner.invoke(cli, ["reconcile"], input="2\n", catch_exceptions=False)
+
+    assert result.exit_code == 0
+    assert "authoritative" in result.output.lower()
+    data = _read_version_file(project_dir)
+    assert data["name"] == "rust-project"
+    assert data["version"]["current"] == "3.2.1"
+    assert data["manifest"] == "Cargo.toml"
+
+
+def test_svt_reconcile_clears_previous_when_current_changes_from_manifest(
+    runner: CliRunner,
+    project_dir: Path,
+):
+    (project_dir / "pyproject.toml").write_text(
+        """[project]
+name = "python-project"
+version = "3.0.0"
+"""
+    )
+    _write_version_file(
+        project_dir,
+        name="python-project",
+        current="1.0.0",
+        previous="0.9.0",
+        manifest="pyproject.toml",
+    )
+
+    result = runner.invoke(cli, ["reconcile"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    data = _read_version_file(project_dir)
+    assert data["version"]["current"] == "3.0.0"
+    assert data["version"]["previous"] is None
