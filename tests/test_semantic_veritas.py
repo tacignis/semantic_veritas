@@ -8,9 +8,9 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from semantic_veritas_tool.data_models import SEMVER_PATTERN
-from semantic_veritas_tool.functions import validate_version
-from semantic_veritas_tool.semantic_veritas import cli
+from semantic_veritas.data_models import SEMVER_PATTERN
+from semantic_veritas.functions import validate_version
+from semantic_veritas.semantic_veritas import cli
 
 
 @pytest.fixture

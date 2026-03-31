@@ -1,4 +1,4 @@
-from semantic_veritas_tool.semantic_veritas import cli
+from semantic_veritas.semantic_veritas import cli
 
 
 def main() -> None:

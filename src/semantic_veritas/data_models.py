@@ -1,4 +1,4 @@
-# File: src/semantic_veritas_tool/data_models.py
+# File: src/semantic_veritas/data_models.py
 # Author: Jonathan Belden
 # Description: Data models for the Semantic Veritas Tool
 

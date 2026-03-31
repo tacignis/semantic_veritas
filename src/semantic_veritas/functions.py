@@ -1,4 +1,4 @@
-# File: src/semantic_veritas_tool/functions.py
+# File: src/semantic_veritas/functions.py
 # Author: Jonathan Belden
 # Description: Core helpers for the semantic-veritas-tool.
 
