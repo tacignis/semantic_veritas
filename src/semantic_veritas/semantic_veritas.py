@@ -60,6 +60,7 @@ cli = typer.Typer(
         "Semantic versioning helper for projects. "
         f"Tool package (semantic-veritas): {get_tool_version()}."
     ),
+    context_settings={"help_option_names": ["-h", "--help"]},
     callback=_cli_callback,
 )
 
@@ -347,11 +348,36 @@ def reconcile(
 
 @cli.command()
 def version(
-    quiet: bool = typer.Option(False, "--quiet", "-q"),
-    name_only: bool = typer.Option(False, "--name-only", "-n"),
-    docker_format: bool = typer.Option(False, "--docker-format", "-d"),
-    previous: bool = typer.Option(False, "--previous", "-p"),
-    tag: str | None = typer.Option(None, "--tag", "-t"),
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Print only the version value (for example: 1.2.3).",
+    ),
+    name_only: bool = typer.Option(
+        False,
+        "--name-only",
+        "-n",
+        help="Print only the project name.",
+    ),
+    docker_format: bool = typer.Option(
+        False,
+        "--docker-format",
+        "-d",
+        help="Print image-style output as <name>/<name>:v<version>.",
+    ),
+    previous: bool = typer.Option(
+        False,
+        "--previous",
+        "-p",
+        help="Print version.previous from version.yml instead of version.current.",
+    ),
+    tag: str | None = typer.Option(
+        None,
+        "--tag",
+        "-t",
+        help="Create and push a git tag with this note as the annotation message.",
+    ),
 ):
     """
     Print the project version from version.yml.
@@ -404,11 +430,36 @@ def version(
 
 @cli.command()
 def bump(
-    major: bool = typer.Option(False, "--major", "-x"),
-    minor: bool = typer.Option(False, "--minor", "-y"),
-    patch: bool = typer.Option(False, "--patch", "-z"),
-    build: bool = typer.Option(False, "--build", "-b"),
-    tag: str | None = typer.Option(None, "--tag", "-t"),
+    major: bool = typer.Option(
+        False,
+        "--major",
+        "-x",
+        help="Increment the major segment and reset lower segments.",
+    ),
+    minor: bool = typer.Option(
+        False,
+        "--minor",
+        "-y",
+        help="Increment the minor segment and reset lower segments.",
+    ),
+    patch: bool = typer.Option(
+        False,
+        "--patch",
+        "-z",
+        help="Increment the patch segment.",
+    ),
+    build: bool = typer.Option(
+        False,
+        "--build",
+        "-b",
+        help="Increment the optional build segment (X.Y.Z.b).",
+    ),
+    tag: str | None = typer.Option(
+        None,
+        "--tag",
+        "-t",
+        help="Create and push a git tag with this note as the annotation message.",
+    ),
     skip_sync: bool = typer.Option(
         False,
         "--skip-sync",
@@ -419,7 +470,7 @@ def bump(
     ),
 ):
     """
-    Bump the version.
+    Bump the project version in version.yml.
     """
     if not version_file_path().exists():
         typer.echo(_missing_version_file_message())
@@ -511,11 +562,19 @@ def bump(
 
 @cli.command(name="set")
 def set_version(
-    new_version: str = typer.Argument(...),
-    tag: str | None = typer.Option(None, "--tag", "-t"),
+    new_version: str = typer.Argument(
+        ...,
+        help="Semantic version to set (format: X.Y.Z or X.Y.Z.b).",
+    ),
+    tag: str | None = typer.Option(
+        None,
+        "--tag",
+        "-t",
+        help="Create and push a git tag with this note as the annotation message.",
+    ),
 ):
     """
-    Set the version.
+    Set the project version in version.yml.
     """
     if not version_file_path().exists():
         typer.echo(_missing_version_file_message())
