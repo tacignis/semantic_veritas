@@ -1,221 +1,162 @@
 # semantic-veritas
 
-`semantic-veritas` provides the `svt` CLI for managing project version metadata in a root `version.yml` file, with optional git tagging.
+`svt` is a CLI for managing semantic versioning across polyglot repositories via a single root `version.yml` file. It keeps version state explicit, provides optional git tagging, and can align Python package managers (`uv`/`poetry`) on bump.
 
-All commands run against the current working directory.
-
-## Project Overview
-
-`svt` helps keep project version state explicit and repeatable across polyglot repositories.
-
-It supports:
-
-- initializing `version.yml`
-- printing current or previous project version
-- bumping semantic versions (including optional build segment)
-- setting an explicit version
-- reconciling `version.yml` from a supported project manifest
-- optionally creating and pushing git tags
-
-`svt --version` / `svt -V` and `svt about` print the installed CLI package version.  
-`svt version` prints the project version from `version.yml`.
-
-## Key Features
-
-- Single source of truth via root `version.yml`
-- Supports `X.Y.Z` and `X.Y.Z.b` version formats
-- Works with `pyproject.toml`, `package.json`, `Cargo.toml`, and `go.mod`
-- Optional Python package version alignment through `uv` or `poetry` when applicable
-- Safe rollback behavior on bump/tag failures
-
-## Installation
-
-### Requirements
-
-- Python `3.14+` (per `pyproject.toml`)
-- `uv` for dependency management in this repository
-
-### Local Development Install
+All commands operate on the current working directory.
 
 ```bash
-uv sync
-uv run svt --help
+pip install semantic-veritas
+svt init
+svt version
+svt bump
 ```
 
-You can run commands via `uv run svt ...`, or install the package so `svt` is available on your `PATH`.
+---
 
-## Usage
+## Version formats
 
-### Quick Start
+| Format | Example | Notes |
+|--------|---------|-------|
+| `X.Y` | `3.13` | Two-segment; default bump increments minor |
+| `X.Y-label` | `3.13-260819` | Two-segment with alphanumeric suffix |
+| `X.Y.Z` | `1.2.3` | Standard semver |
+| `X.Y.Z.b` | `1.2.3.4` | Semver with optional build segment |
+| `X.Y.Z-label` | `1.2.3-rc1` | Any numeric format accepts a label suffix |
 
-```bash
-uv run svt init --manifest pyproject.toml
-uv run svt version
-uv run svt bump
-```
+Labels are alphanumeric only (`[a-zA-Z0-9]+`, no dashes or dots).
 
-### `version.yml` Schema
+---
+
+## version.yml
 
 ```yaml
-name: project_name
+name: my-project
 version:
-  current: x.y.z      # or x.y.z.b (optional fourth segment)
-  previous: x.y.z     # optional; same semver forms as current
-manifest: path        # optional; relative path string or null
+  current:
+    semver: '1.4.2'
+    build: null
+    tag_suffix: null
+  previous:
+    semver: '1.4.1'
+    build: null
+    tag_suffix: null
+manifest: pyproject.toml   # optional
 ```
 
-| Field | Notes |
-|---|---|
-| `name` | Required. |
-| `version.current` | Required. `X.Y.Z` or `X.Y.Z.b`. |
-| `version.previous` | Optional. |
-| `manifest` | Optional. Path written at init (relative when saved); used to resolve name/version when present. |
+Legacy flat-string format (`current: '1.4.2'`) is auto-migrated on read — no manual conversion needed.
 
-If `version.yml` is missing, commands print guidance to run `svt init`. Invalid YAML, missing required fields, or invalid semver values return exit code `1`.
+---
 
-### Migration from `version.txt`
-
-Current releases read only `version.yml`. There is no automatic migration from `version.txt`.
-
-To migrate:
-
-1. create `version.yml` using the schema above, or run `svt init`
-2. optionally set `--manifest <file>`
-3. update fields as needed
-
-## Examples
-
-```bash
-uv run svt init --manifest pyproject.toml
-uv run svt version                          # my-app v1.4.2
-uv run svt version -q                       # 1.4.2
-uv run svt version -p                       # 1.4.1 (previous version)
-uv run svt bump                             # patch bump (default)
-uv run svt bump --minor
-uv run svt bump --skip-sync                 # bump only version.yml; skip package-manager alignment
-uv run svt set 2.0.0
-uv run svt reconcile                        # sync from stored or discovered manifest
-uv run svt reconcile --manifest package.json
-```
-
-## CLI Reference
+## Commands
 
 ### `svt init`
 
-Creates `version.yml` in the current directory and prints `version.yml created`.
+Creates `version.yml` in the current directory.
 
-| Situation | Behavior |
-|---|---|
-| `--manifest <path>` | Uses that file if it exists and is supported (`pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`). |
-| No `--manifest`, 0 manifests in cwd | Sets `name` to directory name and `version.current` to `0.1.0`. |
-| No `--manifest`, exactly 1 manifest | Uses it automatically. |
-| No `--manifest`, 2+ manifests | Prompts interactively to choose one. |
+```bash
+svt init                          # auto-discover manifest
+svt init --manifest Cargo.toml    # use a specific manifest
+```
 
-When possible, name/version are read from the manifest. For `go.mod`, the name comes from the module path tail and version may be inferred from git tags.
+Supported manifests: `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`. When exactly one is present it is used automatically; with multiple, `svt` prompts. With none, name defaults to the directory name and version to `0.1.0`.
+
+---
 
 ### `svt version`
 
-Prints project version data from `version.yml` (not CLI package version). With `--previous` / `-p`, uses `version.previous` and fails if it is unset.
+Prints project version from `version.yml` (not the tool version — use `svt -V` for that).
 
-| Flags | Output (non-error) |
-|---|---|
-| *(default)* | `{name} v{version}` |
-| `-q`, `--quiet` | version only |
-| `-n`, `--name-only` | name only |
-| `-d`, `--docker-format` | `{name}/{name}:v{version}` |
-| `-p` (without `-q`/`-n`/`-d`) | `{version} (previous version)` |
+```bash
+svt version                       # my-project v1.4.2
+svt version -q                    # 1.4.2
+svt version -n                    # my-project
+svt version -d                    # my-project/my-project:v1.4.2
+svt version -p                    # 1.4.1 (previous version)
+svt version --tag "GA release"    # tag + push current version
+```
 
-Optional `--tag` / `-t <note>` creates and pushes a git tag named after the printed version. The note is appended to the tag message. This command does not modify `version.yml`. If push fails after local tag creation, the local tag is removed (if present) and the command exits non-zero.
+---
 
 ### `svt bump`
 
-Bumps `version.current` and moves the old current value to `version.previous`.
+Increments `version.current` and moves the prior value to `version.previous`.
 
-- default (no version-part flags): patch +1
-- exactly one of `--major` / `-x`, `--minor` / `-y`, `--patch` / `-z`
-- `--build` / `-b` alone: increment fourth segment (or set to `1` if absent)
-- `-b` with `-x`/`-y`/`-z`: apply semantic bump, then set fourth segment to `0`
-- semantic bumps without `-b`: remove existing fourth segment
+```bash
+svt bump                          # patch +1 (default for X.Y.Z)
+svt bump --minor                  # minor +1, patch reset
+svt bump --major                  # major +1, minor/patch reset
+svt bump --build                  # increment build segment
+svt bump --label rc1              # append label to bumped version
+svt bump --skip-sync              # skip package-manager alignment
+svt bump --tag "release note"     # tag + push after bump
+```
 
-#### Python alignment behavior
+Two-segment versions (`X.Y`) default to minor bump + a YYMMDD label. Pass `--label` to override.
 
-After writing `version.yml`, `svt` may run `uv version <semver>` or `poetry version <semver>` to align `pyproject.toml`. This is version-setting only (not install/sync). Alignment runs only when the authoritative manifest for the bump is `pyproject.toml`.
+**Python alignment:** after a successful bump, if `pyproject.toml` is the authoritative manifest and a `uv.lock` or `poetry.lock` is present, `svt` runs `uv version <new>` or `poetry version <new>` to keep the manifest in sync. Use `--skip-sync` to bypass this. On any failure, `version.yml` is reverted and the command exits non-zero.
 
-Authoritative manifest resolution:
-
-1. use `version.yml` `manifest` when set and present
-2. otherwise, if exactly one supported manifest exists in cwd, use it
-3. otherwise, if multiple manifests exist and both `pyproject.toml` and one Python lockfile (`uv.lock` or `poetry.lock`) are present, use `pyproject.toml`
-4. otherwise, resolution fails
-
-Lockfile behavior when `pyproject.toml` is authoritative:
-
-| Lockfiles in cwd | Behavior |
-|---|---|
-| `uv.lock` only | runs `uv version ...` |
-| `poetry.lock` only | runs `poetry version ...` |
-| both lockfiles | fails (ambiguous); remove one or use `--skip-sync` |
-| neither lockfile | fails; add a lockfile or use `--skip-sync` |
-
-Non-Python authoritative manifests (`package.json`, `Cargo.toml`, `go.mod`) skip `uv`/`poetry` automatically.
-
-In polyglot repos with multiple manifests and no Python lockfile, bump fails unless you disambiguate by setting `manifest` in `version.yml` (for example, `Cargo.toml`) or adding an appropriate Python lockfile for Python alignment. A lockfile without `pyproject.toml` also fails with guidance.
-
-`svt bump --skip-sync` skips package-manager alignment for the bump, regardless of project type.
-
-On alignment/config failure (`manifest` resolution failure, ambiguous lockfiles, missing lockfile for authoritative `pyproject.toml`, or `uv`/`poetry` version command failure), `version.yml` is reverted and the command exits non-zero.
-
-Optional `--tag` / `-t <note>` runs after a successful bump (and alignment unless skipped). If tag creation fails, tag already exists, or push fails, `version.yml` is reverted. On push failure after local tag creation, the local tag is removed (if present).
+---
 
 ### `svt set <version>`
 
-Sets `version.current` to the provided version and moves the prior value to `version.previous`.
+Sets an explicit version.
 
-- accepted format: `X.Y.Z` or `X.Y.Z.b`
-- does not run `uv`/`poetry` alignment
-- optional `--tag` / `-t <note>` follows the same rollback and local-tag cleanup semantics as `svt bump --tag`
+```bash
+svt set 2.0.0
+svt set 3.13 --label rc1         # result: 3.13-rc1
+svt set 2.0.0 --tag "major GA"
+```
+
+Does not run package-manager alignment.
+
+---
+
+### `svt project`
+
+Read-only inspector for `version.yml`. With no flags, prints the raw file contents.
+
+```bash
+svt project                       # raw file
+svt project -q                    # name, then version (two lines)
+svt project -n                    # name
+svt project -v                    # current version
+svt project -p                    # previous version
+svt project -m                    # manifest path
+svt project -n -v -p -m          # all fields, fixed order
+```
+
+---
 
 ### `svt reconcile`
 
-Refreshes `name`, `version.current`, and `manifest` in `version.yml` from a manifest. The manifest is authoritative.
-
-| Resolution | Behavior |
-|---|---|
-| `--manifest <path>` | Uses that file if it exists and is supported. |
-| No `--manifest`, `manifest` set in `version.yml` | Uses stored path if it exists and is supported. |
-| No `--manifest`, no stored `manifest` | Same discovery as `svt init` (single auto-select, multiple prompt, none fails with guidance). |
-
-Name is read from the manifest using the same rules as `svt init`. `version.current` is updated only if the manifest version parses as valid semver; otherwise current is kept unchanged.
-
-If reconcile changes `version.current`, `version.previous` is cleared to `null`.
-
-| Outcome | Behavior |
-|---|---|
-| Changed | Writes `version.yml` and prints `version.yml updated`. |
-| No-op | Already aligned; exit `0` with no output. |
-| Error | Missing/invalid `version.yml`, unsupported or missing manifest, unresolvable manifest, or manifest parse/read failure; exits `1`. |
-
-## Development
+Refreshes `name`, `version.current`, and `manifest` in `version.yml` from a manifest file.
 
 ```bash
-uv sync
-uv run svt --help
+svt reconcile                     # use stored or discovered manifest
+svt reconcile --manifest package.json
 ```
 
-For local testing, run commands in a target project directory:
+If the manifest version is valid semver, `version.current` is updated and `version.previous` is cleared. If the manifest version is absent or invalid, `name` is updated but `version.current` is kept. No change writes if already aligned.
 
-```bash
-uv run svt init
-uv run svt version
-uv run svt bump --patch
-```
+---
 
-## Contributing
+## Manifest resolution
 
-Contributions are welcome.
+On `bump` and `reconcile`, the authoritative manifest is resolved in this order:
 
-When opening changes, include:
+1. `--manifest <path>` when passed explicitly
+2. `manifest` key in `version.yml` when set and the file exists
+3. Auto-discovery: single match → used automatically; multiple → prompt; none → fails with guidance
 
-- a clear description of command behavior changes
-- updated `README.md` examples/reference when CLI behavior changes
-- notes about any edge-case handling (especially manifest and lockfile resolution)
+---
+
+## Requirements
+
+- Python ≥ 3.11
+- Dependencies: `pydantic`, `typer`, `pyyaml`, `gitpython`
+
+---
+
+## License
+
+MIT
