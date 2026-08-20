@@ -7,7 +7,7 @@ All commands operate on the current working directory.
 ```bash
 pipx install semantic-veritas
 svt init
-svt version
+svt project -v
 svt bump
 ```
 
@@ -60,6 +60,24 @@ Supported manifests: `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`. W
 
 ---
 
+### `svt project`
+
+Inspect `version.yml`. With no flags, prints the raw file contents. Use `--tag` to create and push a git tag for the current version. For the tool version, use `svt -V`.
+
+```bash
+svt project                       # raw file
+svt project -q                    # name, then version (two lines)
+svt project -n                    # name
+svt project -v                    # current version
+svt project -p                    # previous version (empty if unset)
+svt project -m                    # manifest path (empty if unset)
+svt project -d                    # <name>/<name>:v<version>
+svt project -n -v -p -m          # all fields, fixed order
+svt project --tag "GA release"    # tag + push current version
+```
+
+---
+
 ### `svt bump`
 
 Increments `version.current` and moves the prior value to `version.previous`.
@@ -91,24 +109,6 @@ svt set 2.0.0 --tag "major GA"
 ```
 
 Does not run package-manager alignment.
-
----
-
-### `svt project`
-
-The primary inspection command. With no flags, prints the raw `version.yml` contents. Use `--tag` to create and push a git tag for the current version. For the tool version, use `svt -V`.
-
-```bash
-svt project                       # raw file
-svt project -q                    # name, then version (two lines)
-svt project -n                    # name
-svt project -v                    # current version
-svt project -p                    # previous version (empty if unset)
-svt project -m                    # manifest path (empty if unset)
-svt project -d                    # <name>/<name>:v<version>
-svt project -n -v -p -m          # all fields, fixed order
-svt project --tag "GA release"    # tag + push current version
-```
 
 ---
 
