@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Literal
 from git import GitCommandError, PushInfo, Repo
 import yaml
 
-from semantic_veritas.data_models import Project, SEMVER_PATTERN, SEMVER_TAG_PATTERN
+from semantic_veritas.data_models import Project, VersionEntry, SEMVER_PATTERN, SEMVER_TAG_PATTERN
 
 
 DEFAULT_VERSION = "0.1.0"
@@ -63,22 +64,51 @@ def validate_version(value: str) -> bool:
     return result
 
 
-def parse_version_tokens(value: str) -> dict[str, int | None]:
+def parse_version_tokens(value: str) -> dict[str, int | str | None]:
     cleaned_value = normalize_previous_version(value)
-    segments = cleaned_value.split(".")
-    tokens: dict[str, int | None] = {
-        "major": int(segments[0]),
-        "minor": int(segments[1]),
-        "patch": int(segments[2]),
-        "build": int(segments[3]) if len(segments) > 3 else None,
-    }
+    # Try 3-segment first: X.Y.Z[.b][-label]
+    three_seg_match = re.match(
+        r"^([0-9]+)\.([0-9]+)\.([0-9]+)(?:\.([0-9]+))?(?:-([a-zA-Z0-9]+))?$",
+        cleaned_value,
+    )
+    # Try 2-segment: X.Y[-label]
+    two_seg_match = re.match(
+        r"^([0-9]+)\.([0-9]+)(?:-([a-zA-Z0-9]+))?$",
+        cleaned_value,
+    )
+    if three_seg_match:
+        tokens: dict[str, int | str | None] = {
+            "major": int(three_seg_match.group(1)),
+            "minor": int(three_seg_match.group(2)),
+            "patch": int(three_seg_match.group(3)),
+            "build": int(three_seg_match.group(4)) if three_seg_match.group(4) is not None else None,
+            "label": three_seg_match.group(5),  # may be None
+        }
+    elif two_seg_match:
+        tokens = {
+            "major": int(two_seg_match.group(1)),
+            "minor": int(two_seg_match.group(2)),
+            "patch": None,
+            "build": None,
+            "label": two_seg_match.group(3),  # may be None
+        }
+    else:
+        raise ValueError(f"Cannot parse version tokens from: {value!r}")
     return tokens
 
 
-def format_version_tokens(tokens: dict[str, int | None]) -> str:
-    base = f"{tokens['major']}.{tokens['minor']}.{tokens['patch']}"
-    build = tokens.get("build")
-    result = f"{base}.{build}" if build is not None else base
+def format_version_tokens(tokens: dict[str, int | str | None]) -> str:
+    patch = tokens.get("patch")
+    label = tokens.get("label")
+    if patch is None:
+        # Two-segment format: X.Y or X.Y-label
+        base = f"{tokens['major']}.{tokens['minor']}"
+    else:
+        base = f"{tokens['major']}.{tokens['minor']}.{patch}"
+        build = tokens.get("build")
+        if build is not None:
+            base = f"{base}.{build}"
+    result = f"{base}-{label}" if label is not None else base
     return result
 
 
@@ -193,6 +223,16 @@ def python_sync_action_for_bump(
     return action
 
 
+def _serialize_version_entry(entry: VersionEntry) -> dict:
+    """Convert a VersionEntry to the structured mapping written to version.yml."""
+    result = {
+        "semver": entry.semver,
+        "build": entry.build,
+        "tag_suffix": entry.tag_suffix,
+    }
+    return result
+
+
 def save_project_version(project: Project, base_dir: Path | None = None) -> None:
     root = (base_dir or Path.cwd()).resolve()
     serialized_manifest: str | None = None
@@ -207,11 +247,17 @@ def save_project_version(project: Project, base_dir: Path | None = None) -> None
         except ValueError:
             serialized_manifest = manifest_abs.as_posix()
 
+    serialized_previous = (
+        _serialize_version_entry(project.version.previous)
+        if project.version.previous is not None
+        else None
+    )
+
     payload = {
         "name": project.name,
         "version": {
-            "current": project.version.current,
-            "previous": project.version.previous,
+            "current": _serialize_version_entry(project.version.current),
+            "previous": serialized_previous,
         },
         "manifest": serialized_manifest,
     }
@@ -319,20 +365,22 @@ def latest_semver_from_git(base_dir: Path | None = None) -> str | None:
     version: str | None = None
     try:
         repo = Repo(base_dir or Path.cwd(), search_parent_directories=True)
+        # Collect (major, minor, patch, build) tuples — only from 3-segment tags for sorting
         matched_versions: list[tuple[int, int, int, int]] = []
         for tag in repo.tags:
             matched = SEMVER_TAG_PATTERN.fullmatch(tag.name)
             if matched:
                 normalized = matched.group(1)
                 tokens = parse_version_tokens(normalized)
-                matched_versions.append(
-                    (
-                        int(tokens["major"]),
-                        int(tokens["minor"]),
-                        int(tokens["patch"]),
-                        int(tokens["build"] or 0),
+                if tokens["patch"] is not None:
+                    matched_versions.append(
+                        (
+                            int(tokens["major"]),
+                            int(tokens["minor"]),
+                            int(tokens["patch"]),
+                            int(tokens["build"] or 0),
+                        )
                     )
-                )
 
         if matched_versions:
             latest = sorted(matched_versions)[-1]
@@ -352,30 +400,47 @@ def bump_version(
     bump_minor: bool,
     bump_patch: bool,
     bump_build: bool,
+    label: str | None = None,
 ) -> str:
     token_count = sum([bump_major, bump_minor, bump_patch])
     if token_count > 1:
         raise ValueError("Choose only one of --major, --minor, or --patch")
 
     tokens = parse_version_tokens(current)
+    is_two_segment = tokens["patch"] is None
 
-    if bump_major:
-        tokens["major"] = int(tokens["major"]) + 1
-        tokens["minor"] = 0
-        tokens["patch"] = 0
-        tokens["build"] = 0 if bump_build else None
-    elif bump_minor:
-        tokens["minor"] = int(tokens["minor"]) + 1
-        tokens["patch"] = 0
-        tokens["build"] = 0 if bump_build else None
-    elif bump_patch:
-        tokens["patch"] = int(tokens["patch"]) + 1
-        tokens["build"] = 0 if bump_build else None
-    elif bump_build:
-        base_build = int(tokens["build"] or 0)
-        tokens["build"] = base_build + 1
+    if is_two_segment:
+        if bump_patch:
+            raise ValueError("Cannot bump --patch on a two-segment version (X.Y); use --major or --minor")
+        if bump_build:
+            raise ValueError("Cannot bump --build on a two-segment version (X.Y); use --major or --minor")
+        if bump_major:
+            tokens["major"] = int(tokens["major"]) + 1  # type: ignore[arg-type]
+            tokens["minor"] = 0
+        else:
+            tokens["minor"] = int(tokens["minor"]) + 1  # type: ignore[arg-type]
+        tokens["patch"] = None
+        tokens["build"] = None
+        tokens["label"] = label
     else:
-        tokens["patch"] = int(tokens["patch"]) + 1
+        if bump_major:
+            tokens["major"] = int(tokens["major"]) + 1  # type: ignore[arg-type]
+            tokens["minor"] = 0
+            tokens["patch"] = 0
+            tokens["build"] = 0 if bump_build else None
+        elif bump_minor:
+            tokens["minor"] = int(tokens["minor"]) + 1  # type: ignore[arg-type]
+            tokens["patch"] = 0
+            tokens["build"] = 0 if bump_build else None
+        elif bump_patch:
+            tokens["patch"] = int(tokens["patch"]) + 1  # type: ignore[arg-type]
+            tokens["build"] = 0 if bump_build else None
+        elif bump_build:
+            base_build = int(tokens["build"] or 0)
+            tokens["build"] = base_build + 1
+        else:
+            tokens["patch"] = int(tokens["patch"]) + 1  # type: ignore[arg-type]
+        tokens["label"] = label
 
     result = format_version_tokens(tokens)
     return result

@@ -1,5 +1,11 @@
 name: semantic-veritas-tool
 version:
-  current: 0.3.1
-  previous: 0.3.0
+  current:
+    semver: 0.4.3
+    build: null
+    tag_suffix: null
+  previous:
+    semver: 0.4.2
+    build: null
+    tag_suffix: null
 manifest: pyproject.toml

@@ -1,6 +1,6 @@
 [project]
 name = "semantic-veritas"
-version = "0.3.1"
+version = "0.4.3"
 description = "CLI tool for managing semantic versioning across polyglot repositories"
 readme = "README.md"
 license = { text = "MIT" }
@@ -28,10 +28,11 @@ Repository = "https://github.com/yourname/semantic-veritas"
 svt = "semantic_veritas.semantic_veritas:cli"
 
 [build-system]
-requires = ["uv_build>=0.9.15,<0.10.0"]
+requires = ["uv_build>=0.9.15,<0.13"]
 build-backend = "uv_build"
 
 [tool.uv.workspace]
-members = [
+exclude = [
     "tests/lab/python_project",
 ]
+

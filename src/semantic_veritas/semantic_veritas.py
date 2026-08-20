@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import tomllib
+from datetime import datetime
 from pathlib import Path
 
 import typer
@@ -13,7 +14,7 @@ import yaml
 from pydantic import ValidationError
 
 from semantic_veritas import get_tool_version
-from semantic_veritas.data_models import Project, Version
+from semantic_veritas.data_models import Project, Version, VersionEntry
 from semantic_veritas.functions import (
     DEFAULT_VERSION,
     PREVIOUS_VERSION_LABEL,
@@ -24,6 +25,7 @@ from semantic_veritas.functions import (
     discover_known_manifests,
     is_supported_manifest,
     parse_manifest,
+    parse_version_tokens,
     push_git_tag,
     python_sync_action_for_bump,
     read_project_version,
@@ -104,7 +106,7 @@ def _load_project() -> Project:
     except ValidationError:
         typer.echo(
             "version.yml is invalid or incomplete. "
-            "It must include name and version.current (semver X.Y.Z or X.Y.Z.b); "
+            "It must include name and version.current (semver X.Y, X.Y-label, X.Y.Z, or X.Y.Z.b); "
             "optional keys: version.previous, manifest."
         )
         raise typer.Exit(code=1)
@@ -249,12 +251,12 @@ def _resolve_authoritative_manifest(
 
 
 def _get_requested_version(project: Project, previous: bool) -> str:
-    version_value = project.version.current
+    version_value = project.version.current.composed()
     if previous:
         if project.version.previous is None:
             typer.echo("Previous version was not found.")
             raise typer.Exit(code=1)
-        version_value = project.version.previous
+        version_value = project.version.previous.composed()
     return version_value
 
 
@@ -285,7 +287,7 @@ def init(
 
     project = Project(
         name=project_name,
-        version=Version(current=project_version),
+        version=Version(current=VersionEntry.from_string(project_version)),
         manifest=selected_manifest,
     )
     save_project_version(project)
@@ -320,7 +322,7 @@ def reconcile(
     authoritative = _resolve_authoritative_manifest(manifest, project)
     parsed_name, parsed_version = _parse_manifest_or_exit(authoritative, base_dir=base_dir)
 
-    old_current = project.version.current
+    old_current = project.version.current.composed()
     new_current = old_current
     if parsed_version is not None and validate_version(parsed_version):
         new_current = parsed_version
@@ -331,13 +333,16 @@ def reconcile(
 
     updated = Project(
         name=parsed_name,
-        version=Version(current=new_current, previous=new_previous),
+        version=Version(
+            current=VersionEntry.from_string(new_current),
+            previous=new_previous,
+        ),
         manifest=authoritative,
     )
 
     unchanged = (
         project.name == updated.name
-        and project.version.current == updated.version.current
+        and project.version.current.composed() == updated.version.current.composed()
         and project.version.previous == updated.version.previous
         and _manifest_paths_equal(project.manifest, updated.manifest, base_dir)
     )
@@ -454,6 +459,16 @@ def bump(
         "-b",
         help="Increment the optional build segment (X.Y.Z.b).",
     ),
+    label: str | None = typer.Option(
+        None,
+        "--label",
+        "-l",
+        help=(
+            "Label suffix for two-segment versions (X.Y). "
+            "Alphanumeric only. Defaults to today's date (YYMMDD) when bumping X.Y versions. "
+            "Silently ignored for three-segment versions."
+        ),
+    ),
     tag: str | None = typer.Option(
         None,
         "--tag",
@@ -477,7 +492,20 @@ def bump(
         raise typer.Exit(code=1)
 
     project = _load_project()
-    old_version = project.version.current
+    old_version = project.version.current.composed()
+
+    # Validate label value — alphanumeric only
+    if label is not None and not label.isalnum():
+        typer.echo(
+            f"Invalid label {label!r}: labels must be alphanumeric only (letters and digits, no dashes or dots)."
+        )
+        raise typer.Exit(code=1)
+
+    # For two-segment versions, default the label to today's YYMMDD when none given
+    _tokens = parse_version_tokens(old_version)
+    effective_label: str | None = label
+    if _tokens["patch"] is None and effective_label is None:
+        effective_label = datetime.now().strftime("%y%m%d")
 
     try:
         new_version = bump_version(
@@ -486,6 +514,7 @@ def bump(
             bump_minor=minor,
             bump_patch=patch,
             bump_build=build,
+            label=effective_label,
         )
     except ValueError as exc:
         typer.echo(str(exc))
@@ -493,7 +522,10 @@ def bump(
 
     updated_project = Project(
         name=project.name,
-        version=Version(current=new_version, previous=old_version),
+        version=Version(
+            current=VersionEntry.from_string(new_version),
+            previous=VersionEntry.from_string(old_version),
+        ),
         manifest=project.manifest,
     )
     save_project_version(updated_project)
@@ -560,17 +592,90 @@ def bump(
     typer.echo(f"{project.name} v{old_version} -> v{new_version}")
 
 
+@cli.command(name="project")
+def project_info(
+    quiet: bool = typer.Option(
+        False,
+        "--quiet",
+        "-q",
+        help="Print two lines: project name, then version.current. No keys.",
+    ),
+    show_name: bool = typer.Option(
+        False,
+        "--name",
+        "-n",
+        help="Print the project name.",
+    ),
+    show_version: bool = typer.Option(
+        False,
+        "--version",
+        "-v",
+        help="Print version.current.",
+    ),
+    show_previous: bool = typer.Option(
+        False,
+        "--previous",
+        "-p",
+        help="Print version.previous (omitted when not set).",
+    ),
+    show_manifest: bool = typer.Option(
+        False,
+        "--manifest",
+        "-m",
+        help="Print the manifest path (omitted when not set).",
+    ),
+) -> None:
+    """
+    Inspect version.yml (read-only). No flags prints the raw file contents.
+    """
+    field_flags = show_name or show_version or show_previous or show_manifest
+    if quiet and field_flags:
+        typer.echo(
+            "Error: --quiet/-q is mutually exclusive with field flags (-n, -v, -p, -m).",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if not version_file_path().exists():
+        typer.echo(_missing_version_file_message())
+        raise typer.Exit(code=1)
+
+    if not quiet and not field_flags:
+        raw_text = version_file_path().read_text()
+        typer.echo(raw_text, nl=False)
+    else:
+        proj = _load_project()
+        if quiet:
+            typer.echo(proj.name)
+            typer.echo(proj.version.current.composed())
+        else:
+            if show_name:
+                typer.echo(proj.name)
+            if show_version:
+                typer.echo(proj.version.current.composed())
+            if show_previous and proj.version.previous is not None:
+                typer.echo(proj.version.previous.composed())
+            if show_manifest and proj.manifest is not None:
+                typer.echo(str(proj.manifest))
+
+
 @cli.command(name="set")
 def set_version(
     new_version: str = typer.Argument(
         ...,
-        help="Semantic version to set (format: X.Y.Z or X.Y.Z.b).",
+        help="Semantic version to set (format: X.Y, X.Y-label, X.Y.Z, or X.Y.Z.b).",
     ),
     tag: str | None = typer.Option(
         None,
         "--tag",
         "-t",
         help="Create and push a git tag with this note as the annotation message.",
+    ),
+    label: str | None = typer.Option(
+        None,
+        "--label",
+        "-l",
+        help="Alphanumeric label to append to the version (e.g. 260819, rc1).",
     ),
 ):
     """
@@ -580,16 +685,25 @@ def set_version(
         typer.echo(_missing_version_file_message())
         raise typer.Exit(code=1)
 
+    if label is not None:
+        if not label.isalnum():
+            typer.echo("Label must be alphanumeric (letters and digits only).")
+            raise typer.Exit(code=1)
+        new_version = f"{new_version}-{label}"
+
     if not validate_version(new_version):
-        typer.echo("Version is not in the correct format (X.Y.Z[.b]).")
+        typer.echo("Version is not in the correct format (X.Y, X.Y-label, X.Y.Z, or X.Y.Z.b).")
         raise typer.Exit(code=1)
 
     project = _load_project()
-    old_version = project.version.current
+    old_version = project.version.current.composed()
 
     updated_project = Project(
         name=project.name,
-        version=Version(current=new_version, previous=old_version),
+        version=Version(
+            current=VersionEntry.from_string(new_version),
+            previous=VersionEntry.from_string(old_version),
+        ),
         manifest=project.manifest,
     )
     save_project_version(updated_project)
