@@ -98,7 +98,7 @@ def _tokenize_version(value: str) -> dict[str, int | None]:
 
 
 def _quiet_version(runner: CliRunner, project_dir: Path) -> str:
-    result = runner.invoke(cli, ["version", "--quiet"], catch_exceptions=False)
+    result = runner.invoke(cli, ["project", "-v"], catch_exceptions=False)
     return result.output.strip()
 
 
@@ -341,11 +341,11 @@ version = "3.2.1"
     assert "enter a number" in result.output.lower()
 
 
-def test_svt_version_missing_file_fails(runner: CliRunner, project_dir: Path):
+def test_svt_project_missing_file_fails(runner: CliRunner, project_dir: Path):
     """
-    Verifies that `svt version` exits non-zero when `version.yml` is missing.
+    Verifies that `svt project` exits non-zero when `version.yml` is missing.
     """
-    result = runner.invoke(cli, ["version"], catch_exceptions=False)
+    result = runner.invoke(cli, ["project"], catch_exceptions=False)
 
     assert result.exit_code != 0
     assert "run `svt init`" in result.output.lower()
@@ -365,7 +365,7 @@ def test_validate_version_uses_shared_semver_rule():
 @pytest.mark.parametrize(
     "cli_args",
     [
-        ["version"],
+        ["project", "-v"],
         ["bump"],
         ["set", "1.0.0"],
         ["reconcile"],
@@ -388,7 +388,7 @@ def test_svt_rejects_malformed_yaml_version_file(
 @pytest.mark.parametrize(
     "cli_args",
     [
-        ["version"],
+        ["project", "-v"],
         ["bump"],
         ["set", "1.0.0"],
         ["reconcile"],
@@ -435,41 +435,43 @@ def test_svt_help_includes_tool_version_context(runner: CliRunner):
     assert tool_ver in out
 
 
-def test_svt_version_formats(runner: CliRunner, project_dir: Path):
+def test_svt_project_formats(runner: CliRunner, project_dir: Path):
     _write_version_file(project_dir, name="project_name", current="0.1.0")
 
-    result = runner.invoke(cli, ["version"], catch_exceptions=False)
+    # No flags: raw file contents
+    raw = (project_dir / "version.yml").read_text()
+    result = runner.invoke(cli, ["project"], catch_exceptions=False)
     assert result.exit_code == 0
-    assert result.output.strip() == "project_name v0.1.0"
+    assert result.output == raw
 
-    result = runner.invoke(cli, ["version", "--quiet"], catch_exceptions=False)
+    result = runner.invoke(cli, ["project", "-v"], catch_exceptions=False)
     assert result.exit_code == 0
     assert result.output.strip() == "0.1.0"
 
-    result = runner.invoke(cli, ["version", "--name-only"], catch_exceptions=False)
+    result = runner.invoke(cli, ["project", "-n"], catch_exceptions=False)
     assert result.exit_code == 0
     assert result.output.strip() == "project_name"
 
-    result = runner.invoke(cli, ["version", "--docker-format"], catch_exceptions=False)
+    result = runner.invoke(cli, ["project", "-d"], catch_exceptions=False)
     assert result.exit_code == 0
     assert result.output.strip() == "project_name/project_name:v0.1.0"
 
 
-def test_svt_version_previous_missing_fails(runner: CliRunner, project_dir: Path):
+def test_svt_project_previous_when_unset_outputs_empty(runner: CliRunner, project_dir: Path):
     _write_version_file(project_dir, name="project_name", current="0.1.0")
 
-    result = runner.invoke(cli, ["version", "--previous"], catch_exceptions=False)
+    result = runner.invoke(cli, ["project", "-p"], catch_exceptions=False)
 
-    assert result.exit_code != 0
-    assert "previous version was not found" in result.output.lower()
+    assert result.exit_code == 0
+    assert result.output.strip() == ""
 
 
-def test_svt_version_previous_formats(runner: CliRunner, project_dir: Path):
+def test_svt_project_previous_formats(runner: CliRunner, project_dir: Path):
     _write_version_file(project_dir, name="project_name", current="1.4.2", previous="1.4.1")
 
-    result = runner.invoke(cli, ["version", "--previous"], catch_exceptions=False)
+    result = runner.invoke(cli, ["project", "-p"], catch_exceptions=False)
     assert result.exit_code == 0
-    assert result.output.strip() == "1.4.1 (previous version)"
+    assert result.output.strip() == "1.4.1"
 
 
 def test_svt_bump_missing_file_fails(runner: CliRunner, project_dir: Path):
@@ -842,7 +844,7 @@ def test_svt_bump_with_tag_calls_create_and_push_helpers(
 
 @patch("semantic_veritas.semantic_veritas.push_git_tag")
 @patch("semantic_veritas.semantic_veritas.create_git_tag")
-def test_svt_version_with_tag_calls_create_and_push_helpers(
+def test_svt_project_with_tag_calls_create_and_push_helpers(
     mock_create: MagicMock,
     mock_push: MagicMock,
     runner: CliRunner,
@@ -852,7 +854,7 @@ def test_svt_version_with_tag_calls_create_and_push_helpers(
 
     result = runner.invoke(
         cli,
-        ["version", "--tag", "note"],
+        ["project", "--tag", "note"],
         catch_exceptions=False,
     )
 
@@ -1030,7 +1032,7 @@ def test_svt_set_explicit_version(runner: CliRunner, project_dir: Path):
     new_version = _tokenize_version(_quiet_version(runner, project_dir))
     assert new_version == {"major": 1, "minor": 2, "patch": 3, "build": None}
 
-    previous_result = runner.invoke(cli, ["version", "--previous"], catch_exceptions=False)
+    previous_result = runner.invoke(cli, ["project", "-p"], catch_exceptions=False)
     previous_version = _tokenize_version(previous_result.output)
     assert previous_version == old_version
 
@@ -1555,24 +1557,24 @@ class TestSvtSetTwoSegment:
         assert "correct format" in result.output.lower()
 
 
-class TestSvtVersionTwoSegment:
-    """svt version reads two-segment versions correctly."""
+class TestSvtProjectTwoSegment:
+    """svt project reads two-segment versions correctly."""
 
-    def test_version_quiet_two_segment(self, runner: CliRunner, project_dir: Path):
+    def test_project_version_two_segment(self, runner: CliRunner, project_dir: Path):
         _write_version_file(project_dir, name="project_name", current="3.13")
-        result = runner.invoke(cli, ["version", "--quiet"], catch_exceptions=False)
+        result = runner.invoke(cli, ["project", "-v"], catch_exceptions=False)
         assert result.exit_code == 0
         assert result.output.strip() == "3.13"
 
-    def test_version_quiet_two_segment_with_label(self, runner: CliRunner, project_dir: Path):
+    def test_project_version_two_segment_with_label(self, runner: CliRunner, project_dir: Path):
         _write_version_file(project_dir, name="project_name", current="3.13-260819")
-        result = runner.invoke(cli, ["version", "--quiet"], catch_exceptions=False)
+        result = runner.invoke(cli, ["project", "-v"], catch_exceptions=False)
         assert result.exit_code == 0
         assert result.output.strip() == "3.13-260819"
 
-    def test_version_docker_format_two_segment_with_label(self, runner: CliRunner, project_dir: Path):
+    def test_project_docker_format_two_segment_with_label(self, runner: CliRunner, project_dir: Path):
         _write_version_file(project_dir, name="project_name", current="3.13-260819")
-        result = runner.invoke(cli, ["version", "--docker-format"], catch_exceptions=False)
+        result = runner.invoke(cli, ["project", "-d"], catch_exceptions=False)
         assert result.exit_code == 0
         assert result.output.strip() == "project_name/project_name:v3.13-260819"
 
@@ -1704,7 +1706,7 @@ class TestSvtLoadProjectErrorMessage:
         (project_dir / "version.yml").write_text(
             yaml.safe_dump({"name": "x", "version": {"current": "not-a-version"}})
         )
-        result = runner.invoke(cli, ["version"], catch_exceptions=False)
+        result = runner.invoke(cli, ["project", "-v"], catch_exceptions=False)
         assert result.exit_code == 1
         assert "x.y" in result.output.lower() or "x.y" in result.output
         assert "invalid or incomplete" in result.output.lower()
@@ -1908,7 +1910,7 @@ class TestVersionMigrationShim:
             "name: myapp\nversion:\n  current: 2.5\n  previous: 2.4\nmanifest: null\n"
         )
         # Reading it should work transparently
-        result = runner.invoke(cli, ["version", "--quiet"], catch_exceptions=False)
+        result = runner.invoke(cli, ["project", "-v"], catch_exceptions=False)
         assert result.exit_code == 0
         assert result.output.strip() == "2.5"
         # After a bump the file should use the new structured format

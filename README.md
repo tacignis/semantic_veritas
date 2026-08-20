@@ -60,21 +60,6 @@ Supported manifests: `pyproject.toml`, `package.json`, `Cargo.toml`, `go.mod`. W
 
 ---
 
-### `svt version`
-
-Prints project version from `version.yml` (not the tool version — use `svt -V` for that).
-
-```bash
-svt version                       # my-project v1.4.2
-svt version -q                    # 1.4.2
-svt version -n                    # my-project
-svt version -d                    # my-project/my-project:v1.4.2
-svt version -p                    # 1.4.1 (previous version)
-svt version --tag "GA release"    # tag + push current version
-```
-
----
-
 ### `svt bump`
 
 Increments `version.current` and moves the prior value to `version.previous`.
@@ -111,16 +96,18 @@ Does not run package-manager alignment.
 
 ### `svt project`
 
-Read-only inspector for `version.yml`. With no flags, prints the raw file contents.
+The primary inspection command. With no flags, prints the raw `version.yml` contents. Use `--tag` to create and push a git tag for the current version. For the tool version, use `svt -V`.
 
 ```bash
 svt project                       # raw file
 svt project -q                    # name, then version (two lines)
 svt project -n                    # name
 svt project -v                    # current version
-svt project -p                    # previous version
-svt project -m                    # manifest path
+svt project -p                    # previous version (empty if unset)
+svt project -m                    # manifest path (empty if unset)
+svt project -d                    # <name>/<name>:v<version>
 svt project -n -v -p -m          # all fields, fixed order
+svt project --tag "GA release"    # tag + push current version
 ```
 
 ---

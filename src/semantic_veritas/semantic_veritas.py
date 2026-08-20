@@ -17,7 +17,6 @@ from semantic_veritas import get_tool_version
 from semantic_veritas.data_models import Project, Version, VersionEntry
 from semantic_veritas.functions import (
     DEFAULT_VERSION,
-    PREVIOUS_VERSION_LABEL,
     build_tag_message,
     bump_version,
     create_git_tag,
@@ -250,14 +249,6 @@ def _resolve_authoritative_manifest(
     return resolved
 
 
-def _get_requested_version(project: Project, previous: bool) -> str:
-    version_value = project.version.current.composed()
-    if previous:
-        if project.version.previous is None:
-            typer.echo("Previous version was not found.")
-            raise typer.Exit(code=1)
-        version_value = project.version.previous.composed()
-    return version_value
 
 
 @cli.command()
@@ -351,86 +342,6 @@ def reconcile(
         typer.echo("version.yml updated")
 
 
-@cli.command()
-def version(
-    quiet: bool = typer.Option(
-        False,
-        "--quiet",
-        "-q",
-        help="Print only the version value (for example: 1.2.3).",
-    ),
-    name_only: bool = typer.Option(
-        False,
-        "--name-only",
-        "-n",
-        help="Print only the project name.",
-    ),
-    docker_format: bool = typer.Option(
-        False,
-        "--docker-format",
-        "-d",
-        help="Print image-style output as <name>/<name>:v<version>.",
-    ),
-    previous: bool = typer.Option(
-        False,
-        "--previous",
-        "-p",
-        help="Print version.previous from version.yml instead of version.current.",
-    ),
-    tag: str | None = typer.Option(
-        None,
-        "--tag",
-        "-t",
-        help="Create and push a git tag with this note as the annotation message.",
-    ),
-):
-    """
-    Print the project version from version.yml.
-
-    This reads the managed project state, not the semantic-veritas tool package.
-    For the tool itself, use ``svt --version`` (or ``-V``).
-    """
-    if not version_file_path().exists():
-        typer.echo(_missing_version_file_message())
-        raise typer.Exit(code=1)
-
-    project = _load_project()
-    requested_version = _get_requested_version(project, previous=previous)
-
-    if tag is not None:
-        tag_message = build_tag_message(project.name, requested_version, tag)
-        try:
-            create_git_tag(requested_version, tag_message)
-        except ValueError:
-            typer.echo("Tag already exists")
-            raise typer.Exit(code=1)
-        except RuntimeError:
-            typer.echo("Tag creation failed. Please investigate with git commands.")
-            raise typer.Exit(code=1)
-        try:
-            push_git_tag(requested_version)
-        except RuntimeError:
-            delete_local_git_tag(requested_version)
-            typer.echo(
-                "Tag was created locally but could not be pushed. "
-                "The local tag was removed if present.",
-                err=True,
-            )
-            raise typer.Exit(code=1)
-        typer.echo("Tag created and pushed")
-
-    output = f"{project.name} v{requested_version}"
-    if quiet:
-        output = requested_version
-    elif name_only:
-        output = project.name
-    elif docker_format:
-        output = f"{project.name}/{project.name}:v{requested_version}"
-
-    if previous and not quiet and not name_only and not docker_format:
-        output = f"{requested_version}{PREVIOUS_VERSION_LABEL}"
-
-    typer.echo(output)
 
 
 @cli.command()
@@ -624,14 +535,29 @@ def project_info(
         "-m",
         help="Print the manifest path (omitted when not set).",
     ),
+    docker_format: bool = typer.Option(
+        False,
+        "--docker-format",
+        "-d",
+        help="Print image-style output as <name>/<name>:v<version>.",
+    ),
+    tag: str | None = typer.Option(
+        None,
+        "--tag",
+        "-t",
+        help="Create and push a git tag annotated with this note.",
+    ),
 ) -> None:
     """
-    Inspect version.yml (read-only). No flags prints the raw file contents.
+    Inspect version.yml. No flags prints the raw file contents.
+
+    Use --tag to create and push a git tag for the current version.
+    For the tool version, use ``svt --version`` (or ``-V``).
     """
-    field_flags = show_name or show_version or show_previous or show_manifest
+    field_flags = show_name or show_version or show_previous or show_manifest or docker_format
     if quiet and field_flags:
         typer.echo(
-            "Error: --quiet/-q is mutually exclusive with field flags (-n, -v, -p, -m).",
+            "Error: --quiet/-q is mutually exclusive with field flags (-n, -v, -p, -m, -d).",
             err=True,
         )
         raise typer.Exit(code=1)
@@ -640,23 +566,50 @@ def project_info(
         typer.echo(_missing_version_file_message())
         raise typer.Exit(code=1)
 
-    if not quiet and not field_flags:
-        raw_text = version_file_path().read_text()
-        typer.echo(raw_text, nl=False)
-    else:
+    # --tag always requires loading the project to resolve the version
+    if tag is not None or quiet or field_flags:
         proj = _load_project()
+        current_ver = proj.version.current.composed()
+
+        if tag is not None:
+            tag_message = build_tag_message(proj.name, current_ver, tag)
+            try:
+                create_git_tag(current_ver, tag_message)
+            except ValueError:
+                typer.echo("Tag already exists")
+                raise typer.Exit(code=1)
+            except RuntimeError:
+                typer.echo("Tag creation failed. Please investigate with git commands.")
+                raise typer.Exit(code=1)
+            try:
+                push_git_tag(current_ver)
+            except RuntimeError:
+                delete_local_git_tag(current_ver)
+                typer.echo(
+                    "Tag was created locally but could not be pushed. "
+                    "The local tag was removed if present.",
+                    err=True,
+                )
+                raise typer.Exit(code=1)
+            typer.echo("Tag created and pushed")
+
         if quiet:
             typer.echo(proj.name)
-            typer.echo(proj.version.current.composed())
-        else:
+            typer.echo(current_ver)
+        elif field_flags:
             if show_name:
                 typer.echo(proj.name)
             if show_version:
-                typer.echo(proj.version.current.composed())
+                typer.echo(current_ver)
             if show_previous and proj.version.previous is not None:
                 typer.echo(proj.version.previous.composed())
             if show_manifest and proj.manifest is not None:
                 typer.echo(str(proj.manifest))
+            if docker_format:
+                typer.echo(f"{proj.name}/{proj.name}:v{current_ver}")
+    else:
+        raw_text = version_file_path().read_text()
+        typer.echo(raw_text, nl=False)
 
 
 @cli.command(name="set")
