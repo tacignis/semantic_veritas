@@ -5,7 +5,7 @@
 All commands operate on the current working directory.
 
 ```bash
-pip install semantic-veritas
+pipx install semantic-veritas
 svt init
 svt version
 svt bump
@@ -42,8 +42,6 @@ version:
     tag_suffix: null
 manifest: pyproject.toml   # optional
 ```
-
-Legacy flat-string format (`current: '1.4.2'`) is auto-migrated on read — no manual conversion needed.
 
 ---
 
