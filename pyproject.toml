@@ -3,7 +3,10 @@ name = "semantic-veritas"
 version = "0.4.3"
 description = "CLI tool for managing semantic versioning across polyglot repositories"
 readme = "README.md"
-license = { text = "MIT" }
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+]
 authors = [
     { name = "Jonathan Belden", email = "tacignis@gmail.com" }
 ]
